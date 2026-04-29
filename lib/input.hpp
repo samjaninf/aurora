@@ -39,6 +39,7 @@ struct GameController {
   uint8_t m_ledRed = 0xFF;
   uint8_t m_ledGreen = 0xFF;
   uint8_t m_ledBlue = 0xFF;
+  bool m_isColorDirty = true;
 };
 
 GameController* get_controller_for_player(uint32_t player) noexcept;
