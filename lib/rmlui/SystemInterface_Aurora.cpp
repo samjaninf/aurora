@@ -9,9 +9,7 @@
 namespace aurora::rmlui {
 static Module Log("aurora::rmlui");
 
-SystemInterface_Aurora::SystemInterface_Aurora() {
-  SetWindow(window::get_sdl_window());
-}
+SystemInterface_Aurora::SystemInterface_Aurora() { SetWindow(window::get_sdl_window()); }
 
 void SystemInterface_Aurora::ActivateKeyboard(Rml::Vector2f caret_position, float line_height) {
   SDL_Window* sdlWindow = window::get_sdl_window();
@@ -35,36 +33,38 @@ void SystemInterface_Aurora::ActivateKeyboard(Rml::Vector2f caret_position, floa
   };
 
   SDL_SetTextInputArea(sdlWindow, &rect, 0);
-  SDL_StartTextInput(sdlWindow);
+  if (!SDL_TextInputActive(sdlWindow)) {
+    SDL_StartTextInput(sdlWindow);
+  }
 }
 
 void SystemInterface_Aurora::DeactivateKeyboard() {
   SDL_Window* sdlWindow = window::get_sdl_window();
-  if (sdlWindow != nullptr) {
+  if (sdlWindow != nullptr && SDL_TextInputActive(sdlWindow)) {
     SDL_StopTextInput(sdlWindow);
   }
 }
 
 bool SystemInterface_Aurora::LogMessage(Rml::Log::Type type, const Rml::String& message) {
   switch (type) {
-    case Rml::Log::Type::LT_ERROR:
-      Log.error("{}", message);
-      return false;
-    case Rml::Log::Type::LT_ASSERT:
-      Log.fatal("{}", message);
-      return false;
-    case Rml::Log::Type::LT_WARNING:
-      Log.warn("{}", message);
-      return true;
-    case Rml::Log::Type::LT_INFO:
-      Log.info("{}", message);
-      return true;
-    case Rml::Log::Type::LT_DEBUG:
-      Log.debug("{}", message);
-      return true;
-    default:
-      Log.info("{}", message);
-      return true;
+  case Rml::Log::Type::LT_ERROR:
+    Log.error("{}", message);
+    return false;
+  case Rml::Log::Type::LT_ASSERT:
+    Log.fatal("{}", message);
+    return false;
+  case Rml::Log::Type::LT_WARNING:
+    Log.warn("{}", message);
+    return true;
+  case Rml::Log::Type::LT_INFO:
+    Log.info("{}", message);
+    return true;
+  case Rml::Log::Type::LT_DEBUG:
+    Log.debug("{}", message);
+    return true;
+  default:
+    Log.info("{}", message);
+    return true;
   }
 }
-}
+} // namespace aurora::rmlui
