@@ -181,8 +181,8 @@ if (AURORA_ENABLE_GX)
 
     message(STATUS "aurora: Fetching RmlUi")
     FetchContent_Declare(rmlui
-            URL https://github.com/mikke89/RmlUi/archive/refs/tags/6.2.tar.gz
-            URL_HASH SHA256=814c3ff7b9666280338d8f0dda85979f5daf028d01c85fc8975431d1e2fd8e8b
+            URL https://github.com/mikke89/RmlUi/archive/f9b8c9e2935d5df2c7dff2c190d3968e99b0c3dc.tar.gz
+            URL_HASH SHA256=42b830abc2509a8c07cf02ba3313505de3a4642725654f489402022d8fefdd79
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE
             EXCLUDE_FROM_ALL
     )
