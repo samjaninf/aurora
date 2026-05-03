@@ -6,9 +6,10 @@
 #include <array>
 #include <sys/stat.h>
 
-static const int32_t k_mappingsFileVersion = 3;
+namespace {
+constexpr int32_t k_mappingsFileVersion = 3;
 
-static std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtons{{
+std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtons{{
     {SDL_GAMEPAD_BUTTON_SOUTH, PAD_BUTTON_A},
     {SDL_GAMEPAD_BUTTON_EAST, PAD_BUTTON_B},
     {SDL_GAMEPAD_BUTTON_WEST, PAD_BUTTON_X},
@@ -23,7 +24,7 @@ static std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtons{{
     {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, PAD_BUTTON_RIGHT},
 }};
 
-static std::array<PADKeyButtonBinding, PAD_BUTTON_COUNT> g_defaultKeys{{
+std::array<PADKeyButtonBinding, PAD_BUTTON_COUNT> g_defaultKeys{{
     {PAD_KEY_INVALID, PAD_BUTTON_A},
     {PAD_KEY_INVALID, PAD_BUTTON_B},
     {PAD_KEY_INVALID, PAD_BUTTON_X},
@@ -38,7 +39,7 @@ static std::array<PADKeyButtonBinding, PAD_BUTTON_COUNT> g_defaultKeys{{
     {PAD_KEY_INVALID, PAD_BUTTON_RIGHT},
 }};
 
-static std::array<PADKeyAxisBinding, PAD_AXIS_COUNT> g_defaultKeyAxis{{
+std::array<PADKeyAxisBinding, PAD_AXIS_COUNT> g_defaultKeyAxis{{
     {PAD_KEY_INVALID, PAD_AXIS_LEFT_X_POS, 0},
     {PAD_KEY_INVALID, PAD_AXIS_LEFT_X_NEG, 0},
     {PAD_KEY_INVALID, PAD_AXIS_LEFT_Y_POS, 0},
@@ -51,7 +52,7 @@ static std::array<PADKeyAxisBinding, PAD_AXIS_COUNT> g_defaultKeyAxis{{
     {PAD_KEY_INVALID, PAD_AXIS_TRIGGER_R, 0},
 }};
 
-static std::array<PADAxisMapping, PAD_AXIS_COUNT> g_defaultAxes{{
+std::array<PADAxisMapping, PAD_AXIS_COUNT> g_defaultAxes{{
     {{SDL_GAMEPAD_AXIS_LEFTX, AXIS_SIGN_POSITIVE}, SDL_GAMEPAD_BUTTON_INVALID, PAD_AXIS_LEFT_X_POS},
     {{SDL_GAMEPAD_AXIS_LEFTX, AXIS_SIGN_NEGATIVE}, SDL_GAMEPAD_BUTTON_INVALID, PAD_AXIS_LEFT_X_NEG},
     // SDL's gamepad y-axis is inverted from GC's
@@ -80,9 +81,49 @@ struct PADKeyboardState {
 
 std::array<PADKeyboardState, PAD_MAX_CONTROLLERS> g_keyboardBindings;
 
-static bool g_initialized;
+struct PADCLampRegion {
+  uint8_t minTrigger;
+  uint8_t maxTrigger;
+  int8_t minStick;
+  int8_t maxStick;
+  int8_t xyStick;
+  int8_t minSubstick;
+  int8_t maxSubstick;
+  int8_t xySubstick;
+  int8_t radStick;
+  int8_t radSubstick;
+};
+
+constexpr PADCLampRegion ClampRegion{
+    // Triggers
+    30,
+    180,
+
+    // Left stick
+    15,
+    72,
+    40,
+
+    // Right stick
+    15,
+    59,
+    31,
+
+    // Stick radii
+    56,
+    44,
+};
+
+bool g_initialized;
+bool g_blockPAD = false;
+bool g_suppressHeldOnRead = false;
+std::array<PADButton, PAD_CHANMAX> g_suppressedButtons{};
+std::array<bool, PAD_CHANMAX> g_suppressLeftTrigger{};
+std::array<bool, PAD_CHANMAX> g_suppressRightTrigger{};
+} // namespace
 
 void PADSetSpec(u32 spec) {}
+
 BOOL PADInit() {
   if (g_initialized) {
     return true;
@@ -95,8 +136,11 @@ BOOL PADInit() {
 
   return true;
 }
+
 BOOL PADRecalibrate(u32 mask) { return true; }
+
 BOOL PADReset(u32 mask) { return true; }
+
 void PADSetAnalogMode(u32 mode) {}
 
 aurora::input::GameController* __PADGetControllerForIndex(uint32_t idx) {
@@ -251,13 +295,7 @@ static Sint16 _get_axis_value(aurora::input::GameController* controller, PADAxis
   }
 }
 
-bool gBlockPAD = false;
-bool gSuppressHeldOnRead = false;
-std::array<PADButton, PAD_CHANMAX> gSuppressedButtons{};
-std::array<bool, PAD_CHANMAX> gSuppressLeftTrigger{};
-std::array<bool, PAD_CHANMAX> gSuppressRightTrigger{};
-
-void neutralize_status(PADStatus& status) {
+static void neutralize_status(PADStatus& status) {
   status.button = 0;
   status.stickX = 0;
   status.stickY = 0;
@@ -269,27 +307,27 @@ void neutralize_status(PADStatus& status) {
   status.analogB = 0;
 }
 
-void apply_unblock_suppression(PADStatus& status, u32 port, bool captureHeldInput) {
+static void apply_unblock_suppression(PADStatus& status, u32 port, bool captureHeldInput) {
   if (captureHeldInput) {
-    gSuppressedButtons[port] |= status.button;
-    gSuppressLeftTrigger[port] = gSuppressLeftTrigger[port] || status.triggerLeft != 0;
-    gSuppressRightTrigger[port] = gSuppressRightTrigger[port] || status.triggerRight != 0;
+    g_suppressedButtons[port] |= status.button;
+    g_suppressLeftTrigger[port] = g_suppressLeftTrigger[port] || status.triggerLeft > ClampRegion.minTrigger;
+    g_suppressRightTrigger[port] = g_suppressRightTrigger[port] || status.triggerRight > ClampRegion.minTrigger;
   }
 
-  gSuppressedButtons[port] &= status.button;
-  status.button &= ~gSuppressedButtons[port];
+  g_suppressedButtons[port] &= status.button;
+  status.button &= ~g_suppressedButtons[port];
 
-  if (gSuppressLeftTrigger[port]) {
-    if (status.triggerLeft == 0) {
-      gSuppressLeftTrigger[port] = false;
+  if (g_suppressLeftTrigger[port]) {
+    if (status.triggerLeft <= ClampRegion.minTrigger) {
+      g_suppressLeftTrigger[port] = false;
     } else {
       status.triggerLeft = 0;
     }
   }
 
-  if (gSuppressRightTrigger[port]) {
-    if (status.triggerRight == 0) {
-      gSuppressRightTrigger[port] = false;
+  if (g_suppressRightTrigger[port]) {
+    if (status.triggerRight <= ClampRegion.minTrigger) {
+      g_suppressRightTrigger[port] = false;
     } else {
       status.triggerRight = 0;
     }
@@ -299,8 +337,8 @@ void apply_unblock_suppression(PADStatus& status, u32 port, bool captureHeldInpu
 uint32_t PADRead(PADStatus* status) {
   int numKeys = 0;
   const bool* kbState = SDL_GetKeyboardState(&numKeys);
-  const bool captureHeldInput = gSuppressHeldOnRead && !gBlockPAD;
-  gSuppressHeldOnRead = false;
+  const bool captureHeldInput = g_suppressHeldOnRead && !g_blockPAD;
+  g_suppressHeldOnRead = false;
 
   uint32_t rumbleSupport = 0;
   for (uint32_t i = 0; i < PAD_CHANMAX; ++i) {
@@ -308,9 +346,9 @@ uint32_t PADRead(PADStatus* status) {
     auto controller = aurora::input::get_controller_for_player(i);
     if (controller == nullptr && !g_keyboardBindings[i].m_mappingsSet) {
       status[i].err = PAD_ERR_NO_CONTROLLER;
-      gSuppressedButtons[i] = 0;
-      gSuppressLeftTrigger[i] = false;
-      gSuppressRightTrigger[i] = false;
+      g_suppressedButtons[i] = 0;
+      g_suppressLeftTrigger[i] = false;
+      g_suppressRightTrigger[i] = false;
       continue;
     }
 
@@ -418,7 +456,7 @@ uint32_t PADRead(PADStatus* status) {
       }
     }
 
-    if (gBlockPAD) {
+    if (g_blockPAD) {
       neutralize_status(status[i]);
     } else {
       apply_unblock_suppression(status[i], i, captureHeldInput);
@@ -459,39 +497,6 @@ void PADControlAllMotors(const uint32_t* commands) {
     PADControlMotor(i, commands[i]);
   }
 }
-
-struct PADCLampRegion {
-  uint8_t minTrigger;
-  uint8_t maxTrigger;
-  int8_t minStick;
-  int8_t maxStick;
-  int8_t xyStick;
-  int8_t minSubstick;
-  int8_t maxSubstick;
-  int8_t xySubstick;
-  int8_t radStick;
-  int8_t radSubstick;
-};
-
-static constexpr PADCLampRegion ClampRegion{
-    // Triggers
-    30,
-    180,
-
-    // Left stick
-    15,
-    72,
-    40,
-
-    // Right stick
-    15,
-    59,
-    31,
-
-    // Stick radii
-    56,
-    44,
-};
 
 void ClampTrigger(uint8_t* trigger, uint8_t min, uint8_t max) {
   if (*trigger <= min) {
@@ -969,10 +974,10 @@ void PADRestoreDefaultMapping(uint32_t port) {
 }
 
 void PADBlockInput(bool block) {
-  if (gBlockPAD && !block) {
-    gSuppressHeldOnRead = true;
+  if (g_blockPAD && !block) {
+    g_suppressHeldOnRead = true;
   }
-  gBlockPAD = block;
+  g_blockPAD = block;
 }
 
 SDL_Gamepad* PADGetSDLGamepadForIndex(u32 index) {
