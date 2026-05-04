@@ -130,9 +130,7 @@ if (AURORA_ENABLE_GX)
     target_link_libraries(imgui_backends PRIVATE imgui ${AURORA_SDL3_TARGET} dawn::webgpu_dawn)
     target_link_libraries(imgui PUBLIC imgui_backends)
 
-    # Permit disabling for macOS universal builds
-    option(IMGUI_USE_FREETYPE "Enable freetype with imgui" ON)
-    if (FREETYPE_FOUND AND IMGUI_USE_FREETYPE)
+    if (TARGET Freetype::Freetype)
       target_sources(imgui PRIVATE ${imgui_SOURCE_DIR}/misc/freetype/imgui_freetype.cpp)
       target_compile_definitions(imgui PUBLIC IMGUI_ENABLE_FREETYPE)
       target_link_libraries(imgui PRIVATE Freetype::Freetype)
