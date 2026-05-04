@@ -8,6 +8,7 @@
 
 #include <cstdarg>
 
+#if 0
 static aurora::Module reporter("aurora::os::report");
 
 void OSReport(const char* msg, ...) {
@@ -39,4 +40,4 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
 void OSFatal(GXColor fg, GXColor bg, const char* msg) {
   reporter.fatal("{}", msg);
 }
-
+#endif
