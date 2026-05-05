@@ -1,9 +1,11 @@
 #include "WebGPURenderInterface.hpp"
 
+#include "FileInterface_SDL.h"
+
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/DecorationTypes.h>
 
-#include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_surface.h>
 
 #include <algorithm>
@@ -43,57 +45,24 @@ struct CompiledShaderData {
   GradientUniformBlock gradient;
 };
 
-bool is_file(const std::string& path) {
-  SDL_PathInfo pathInfo{};
-  return SDL_GetPathInfo(path.c_str(), &pathInfo) && pathInfo.type == SDL_PATHTYPE_FILE;
-}
-
-std::string resolve_texture_source(const Rml::String& source) {
-  std::string path(source);
-  constexpr std::string_view scheme = "file://";
-  if (path.compare(0, scheme.size(), scheme) == 0) {
-    path.erase(0, scheme.size());
-  }
-  if (is_file(path)) {
-    return path;
-  }
-
-  if (!path.empty() && path.front() != '/') {
-    const std::string absPath = "/" + path;
-    if (is_file(absPath)) {
-      return absPath;
-    }
-  }
-
-  const char* base_path = SDL_GetBasePath();
-  if (base_path != nullptr && base_path[0] != '\0') {
-    const std::string base(base_path);
-    const std::string baseRel = base + path;
-    if (is_file(baseRel)) {
-      return baseRel;
-    }
-  }
-
-  return path;
-}
-
-Image get_image(const std::string& path) {
-  SDL_PathInfo pathInfo{};
-  if (!(SDL_GetPathInfo(path.c_str(), &pathInfo) && pathInfo.type == SDL_PATHTYPE_FILE)) {
-    Log.warn("Image '{}' does not exist", path);
+Image get_image(const Rml::String& source) {
+  FileInterface_SDL fileInterface;
+  const Rml::FileHandle file = fileInterface.Open(source);
+  if (file == Rml::FileHandle{}) {
     return {};
   }
 
-  SDL_Surface* loadedSurface = SDL_LoadPNG(path.c_str());
+  auto* stream = reinterpret_cast<SDL_IOStream*>(file);
+  SDL_Surface* loadedSurface = SDL_LoadPNG_IO(stream, true);
   if (loadedSurface == nullptr) {
-    Log.warn("Failed to load image '{}': {}", path, SDL_GetError());
+    Log.warn("Failed to load image '{}': {}", source, SDL_GetError());
     return {};
   }
 
   SDL_Surface* rgbaSurface = SDL_ConvertSurface(loadedSurface, SDL_PIXELFORMAT_RGBA32);
   SDL_DestroySurface(loadedSurface);
   if (rgbaSurface == nullptr) {
-    Log.warn("Failed to convert image '{}': {}", path, SDL_GetError());
+    Log.warn("Failed to convert image '{}': {}", source, SDL_GetError());
     return {};
   }
 
@@ -552,11 +521,9 @@ void WebGPURenderInterface::ReleaseGeometry(Rml::CompiledGeometryHandle geometry
 
 Rml::TextureHandle WebGPURenderInterface::LoadTexture(Rml::Vector2i& dimensions, const Rml::String& source) {
   // load texels from image source
-  const auto resolved_source = resolve_texture_source(source);
-  const auto image = get_image(resolved_source);
-
+  const auto image = get_image(source);
   if (image.size == 0) {
-    Log.error("Failed to load texture! Path: {}", resolved_source);
+    Log.error("Failed to load texture! Path: {}", source);
     return 0;
   }
 
