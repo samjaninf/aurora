@@ -49,7 +49,9 @@ wgpu::Instance g_instance;
 static wgpu::AdapterInfo g_adapterInfo;
 static wgpu::SurfaceCapabilities g_surfaceCapabilities;
 
-static wgpu::PresentMode best_present_mode(bool vsync) {
+namespace {
+
+wgpu::PresentMode best_present_mode(bool vsync) {
   const auto supports = [](const wgpu::PresentMode candidate) {
     for (size_t i = 0; i < g_surfaceCapabilities.presentModeCount; ++i) {
       if (g_surfaceCapabilities.presentModes[i] == candidate) {
@@ -73,6 +75,31 @@ static wgpu::PresentMode best_present_mode(bool vsync) {
   }
   return wgpu::PresentMode::Fifo;
 }
+
+wgpu::TextureFormat to_linear(wgpu::TextureFormat format) {
+  if (format == wgpu::TextureFormat::RGBA8UnormSrgb) {
+    return wgpu::TextureFormat::RGBA8Unorm;
+  }
+  if (format == wgpu::TextureFormat::BGRA8UnormSrgb) {
+    return wgpu::TextureFormat::BGRA8Unorm;
+  }
+  return format;
+}
+
+wgpu::TextureFormat best_surface_format() {
+  if (g_surfaceCapabilities.formatCount == 0) {
+    return wgpu::TextureFormat::Undefined;
+  }
+  for (size_t i = 0; i < g_surfaceCapabilities.formatCount; ++i) {
+    const auto format = to_linear(g_surfaceCapabilities.formats[i]);
+    if (format == wgpu::TextureFormat::RGBA8Unorm || format == wgpu::TextureFormat::BGRA8Unorm) {
+      return format;
+    }
+  }
+  return g_surfaceCapabilities.formats[0];
+}
+
+} // namespace
 
 TextureWithSampler create_render_texture(uint32_t width, uint32_t height, bool multisampled) {
   const wgpu::Extent3D size{
@@ -349,16 +376,6 @@ static wgpu::BackendType to_wgpu_backend(AuroraBackend backend) {
 }
 
 static bool create_surface() {
-#ifdef EMSCRIPTEN
-  const WGPUSurfaceDescriptorFromCanvasHTMLSelector canvasDescriptor{
-      .chain = {.sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLSelector},
-      .selector = "#canvas",
-  };
-  const wgpu::SurfaceDescriptor surfaceDescriptor{
-      .nextInChain = reinterpret_cast<const wgpu::ChainedStruct*>(&canvasDescriptor.chain),
-      .label = "Surface",
-  };
-#else
   SDL_Window* window = window::get_sdl_window();
   if (window == nullptr) {
     Log.error("Failed to create surface: no window");
@@ -373,7 +390,6 @@ static bool create_surface() {
       .nextInChain = chainedDescriptor.get(),
       .label = "Surface",
   };
-#endif
   g_surface = g_instance.CreateSurface(&surfaceDescriptor);
   if (!g_surface) {
     Log.error("Failed to create surface");
@@ -384,10 +400,7 @@ static bool create_surface() {
 
 bool initialize(AuroraBackend auroraBackend) {
   if (!g_instance) {
-#ifdef WEBGPU_DAWN
-    Log.info("Initializing Dawn");
-#endif
-    Log.info("Creating WGPU instance");
+    Log.info("Creating WebGPU instance");
     const std::array requiredInstanceFeatures{
         wgpu::InstanceFeatureName::TimedWaitAny,
     };
@@ -402,17 +415,11 @@ bool initialize(AuroraBackend auroraBackend) {
 #endif
     g_instance = wgpu::CreateInstance(&instanceDescriptor);
     if (!g_instance) {
-      Log.error("Failed to create WGPU instance");
+      Log.error("Failed to create WebGPU instance");
       return false;
     }
   }
   const wgpu::BackendType backend = to_wgpu_backend(auroraBackend);
-#ifdef EMSCRIPTEN
-  if (backend != wgpu::BackendType::WebGPU) {
-    Log.warn("Backend type {} unsupported", magic_enum::enum_name(backend));
-    return false;
-  }
-#endif
   Log.info("Attempting to initialize {}", magic_enum::enum_name(backend));
 #if 0
   // D3D12's debug layer is very slow
@@ -609,13 +616,8 @@ bool initialize(AuroraBackend auroraBackend) {
     Log.error("Surface has no present modes");
     return false;
   }
-  auto surfaceFormat = g_surfaceCapabilities.formats[0];
+  auto surfaceFormat = best_surface_format();
   auto presentMode = best_present_mode(g_config.vsync);
-  if (surfaceFormat == wgpu::TextureFormat::RGBA8UnormSrgb) {
-    surfaceFormat = wgpu::TextureFormat::RGBA8Unorm;
-  } else if (surfaceFormat == wgpu::TextureFormat::BGRA8UnormSrgb) {
-    surfaceFormat = wgpu::TextureFormat::BGRA8Unorm;
-  }
   Log.info("Using surface format {}, present mode {}", magic_enum::enum_name(surfaceFormat),
            magic_enum::enum_name(presentMode));
   const auto size = window::get_window_size();

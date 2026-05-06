@@ -38,50 +38,32 @@ bool g_frameBufferAspectFit = false;
 AuroraWindowSize g_windowSize;
 std::vector<AuroraEvent> g_events;
 
-inline bool operator==(const AuroraWindowSize& lhs, const AuroraWindowSize& rhs) {
+bool operator==(const AuroraWindowSize& lhs, const AuroraWindowSize& rhs) {
   return lhs.width == rhs.width && lhs.height == rhs.height && lhs.fb_width == rhs.fb_width &&
          lhs.fb_height == rhs.fb_height && lhs.native_fb_height == rhs.native_fb_height &&
          lhs.native_fb_width == rhs.native_fb_width && lhs.scale == rhs.scale;
 }
 
-Vec2<int> scale_frame_buffer_to_aspect(int base_width, int base_height, float scale, float aspect) {
-  if (base_width <= 0 || base_height <= 0 || scale <= 0.f || aspect <= 0.f) {
-    return {std::max(base_width, 1), std::max(base_height, 1)};
+Vec2<int> scale_frame_buffer_to_aspect(int w, int h, float scale, float aspect) {
+  if (w <= 0 || h <= 0 || scale <= 0.f || aspect <= 0.f) {
+    return {std::max(w, 1), std::max(h, 1)};
   }
-
-  const int scaled_base_width = std::max(1, static_cast<int>(std::lround(static_cast<float>(base_width) * scale)));
-  const int scaled_base_height = std::max(1, static_cast<int>(std::lround(static_cast<float>(base_height) * scale)));
-  const float base_aspect = static_cast<float>(base_width) / static_cast<float>(base_height);
-  if (aspect >= base_aspect) {
-    return {
-        std::max(1, static_cast<int>(std::lround(static_cast<float>(scaled_base_height) * aspect))),
-        scaled_base_height,
-    };
+  const int baseW = std::max(1, static_cast<int>(std::lround(static_cast<float>(w) * scale)));
+  const int baseH = std::max(1, static_cast<int>(std::lround(static_cast<float>(h) * scale)));
+  if (aspect >= static_cast<float>(w) / static_cast<float>(h)) {
+    return {std::max(1, static_cast<int>(std::lround(static_cast<float>(baseH) * aspect))), baseH};
   }
-
-  return {
-      scaled_base_width,
-      std::max(1, static_cast<int>(std::lround(static_cast<float>(scaled_base_width) / aspect))),
-  };
+  return {baseW, std::max(1, static_cast<int>(std::lround(static_cast<float>(baseW) / aspect)))};
 }
 
 Vec2<int> fit_frame_buffer_to_aspect(int width, int height, float aspect) {
   if (width <= 0 || height <= 0 || aspect <= 0.f) {
     return {std::max(width, 1), std::max(height, 1)};
   }
-
-  const float targetAspect = static_cast<float>(width) / static_cast<float>(height);
-  if (targetAspect > aspect) {
-    return {
-        std::max(1, static_cast<int>(std::lround(static_cast<float>(height) * aspect))),
-        height,
-    };
+  if (static_cast<float>(width) / static_cast<float>(height) > aspect) {
+    return {std::max(1, static_cast<int>(std::lround(static_cast<float>(height) * aspect))), height};
   }
-
-  return {
-      width,
-      std::max(1, static_cast<int>(std::lround(static_cast<float>(width) / aspect))),
-  };
+  return {width, std::max(1, static_cast<int>(std::lround(static_cast<float>(width) / aspect)))};
 }
 
 void resize_swapchain() noexcept {
@@ -95,6 +77,11 @@ void resize_swapchain() noexcept {
     }
   }
   g_windowSize = size;
+  if (g_renderer != nullptr) {
+    SDL_SetRenderLogicalPresentation(g_renderer, static_cast<int>(size.native_fb_width),
+                                     static_cast<int>(size.native_fb_height), SDL_LOGICAL_PRESENTATION_DISABLED);
+    SDL_SetRenderScale(g_renderer, size.scale, size.scale);
+  }
 #ifdef AURORA_ENABLE_GX
   webgpu::resize_swapchain(size.fb_width, size.fb_height, size.native_fb_width, size.native_fb_height);
 #endif
@@ -124,7 +111,6 @@ const AuroraEvent* poll_events() {
 #ifdef AURORA_ENABLE_GX
     imgui::process_event(event);
 #endif
-
 #ifdef AURORA_ENABLE_RMLUI
     rmlui::handle_event(event);
 #endif
@@ -271,10 +257,6 @@ bool create_window(AuroraBackend backend) {
   default:
     break;
   }
-#ifdef __SWITCH__
-  Sint32 width = 1280;
-  Sint32 height = 720;
-#else
   auto width = static_cast<Sint32>(g_config.windowWidth);
   auto height = static_cast<Sint32>(g_config.windowHeight);
   if (width == 0 || height == 0) {
@@ -295,7 +277,6 @@ bool create_window(AuroraBackend backend) {
     posY = SDL_WINDOWPOS_UNDEFINED;
   }
 
-#endif
   const auto props = SDL_CreateProperties();
   TRY(SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, g_config.appName), "Failed to set {}: {}",
       SDL_PROP_WINDOW_CREATE_TITLE_STRING, SDL_GetError());

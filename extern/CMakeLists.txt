@@ -3,44 +3,38 @@ include(FetchContent)
 # Don't build tests for third party dependencies
 set(BUILD_TESTING OFF CACHE INTERNAL "Build tests")
 
-if (NOT EMSCRIPTEN)
-  if (AURORA_ENABLE_GX)
-    include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/AuroraDawnProvider.cmake)
-  endif ()
-
-  # Abseil is needed for core libraries. It normally comes via Dawn's vendor build.
-  # Otherwise prefer a system package and only fetch it as a last resort.
-  if (NOT TARGET absl::flat_hash_map OR NOT TARGET absl::btree)
-    find_package(absl CONFIG QUIET GLOBAL)
-  endif ()
-
-  if (TARGET absl::flat_hash_map AND TARGET absl::btree)
-    message(STATUS "aurora: Using system/existing abseil")
-  else ()
-    message(STATUS "aurora: Fetching abseil-cpp (standalone)")
-    if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY OR CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "DLL$")
-      set(ABSL_MSVC_STATIC_RUNTIME OFF CACHE INTERNAL "Link static runtime libraries")
-    else()
-      set(ABSL_MSVC_STATIC_RUNTIME ON CACHE INTERNAL "Link static runtime libraries")
-    endif()
-    set(ABSL_PROPAGATE_CXX_STD ON)
-    FetchContent_Declare(abseil-cpp
-      URL https://github.com/abseil/abseil-cpp/archive/refs/tags/20240722.0.tar.gz
-      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-      EXCLUDE_FROM_ALL
-    )
-    FetchContent_MakeAvailable(abseil-cpp)
-    if (NOT TARGET absl::flat_hash_map OR NOT TARGET absl::btree)
-      message(FATAL_ERROR "Failed to make abseil-cpp available")
-    endif ()
-  endif ()
-
-  include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/AuroraSDL3Provider.cmake)
-else ()
-  set(ABSL_PROPAGATE_CXX_STD ON)
-  add_subdirectory(dawn/third_party/abseil-cpp EXCLUDE_FROM_ALL)
-  set(AURORA_SDL3_TARGET SDL3::SDL3-static CACHE INTERNAL "SDL3 target for emscripten")
+if (AURORA_ENABLE_GX)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/AuroraDawnProvider.cmake)
 endif ()
+
+# Abseil is needed for core libraries. It normally comes via Dawn's vendor build.
+# Otherwise prefer a system package and only fetch it as a last resort.
+if (NOT TARGET absl::flat_hash_map OR NOT TARGET absl::btree)
+  find_package(absl CONFIG QUIET GLOBAL)
+endif ()
+
+if (TARGET absl::flat_hash_map AND TARGET absl::btree)
+  message(STATUS "aurora: Using system/existing abseil")
+else ()
+  message(STATUS "aurora: Fetching abseil-cpp (standalone)")
+  if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY OR CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "DLL$")
+    set(ABSL_MSVC_STATIC_RUNTIME OFF CACHE INTERNAL "Link static runtime libraries")
+  else()
+    set(ABSL_MSVC_STATIC_RUNTIME ON CACHE INTERNAL "Link static runtime libraries")
+  endif()
+  set(ABSL_PROPAGATE_CXX_STD ON)
+  FetchContent_Declare(abseil-cpp
+    URL https://github.com/abseil/abseil-cpp/archive/refs/tags/20240722.0.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    EXCLUDE_FROM_ALL
+  )
+  FetchContent_MakeAvailable(abseil-cpp)
+  if (NOT TARGET absl::flat_hash_map OR NOT TARGET absl::btree)
+    message(FATAL_ERROR "Failed to make abseil-cpp available")
+  endif ()
+endif ()
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/AuroraSDL3Provider.cmake)
 
 if (NOT TARGET xxhash)
   message(STATUS "aurora: Fetching xxhash")

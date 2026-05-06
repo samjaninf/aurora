@@ -146,8 +146,7 @@ void render(const wgpu::RenderPassEncoder& pass) noexcept {
 }
 
 ImTextureID add_texture(uint32_t width, uint32_t height, const uint8_t* data) noexcept {
-  if (g_useSdlRenderer) {
-    SDL_Renderer* renderer = window::get_sdl_renderer();
+  if (SDL_Renderer* renderer = window::get_sdl_renderer()) {
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, width, height);
     SDL_UpdateTexture(texture, nullptr, data, width * 4);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
