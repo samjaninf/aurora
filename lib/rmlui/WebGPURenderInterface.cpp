@@ -721,11 +721,14 @@ void WebGPURenderInterface::EnsureRenderTarget(RenderTarget& target, const char*
   };
   target.texture = webgpu::g_device.CreateTexture(&textureDesc);
   target.view = target.texture.CreateView(nullptr);
+  target.bindGroup = CreateImageBindGroup(target.view);
+}
 
+wgpu::BindGroup WebGPURenderInterface::CreateImageBindGroup(const wgpu::TextureView& view) const {
   const std::array bindGroupEntries{
       wgpu::BindGroupEntry{
           .binding = 0,
-          .textureView = target.view,
+          .textureView = view,
       },
   };
   const wgpu::BindGroupDescriptor bindGroupDesc{
@@ -733,7 +736,7 @@ void WebGPURenderInterface::EnsureRenderTarget(RenderTarget& target, const char*
       .entryCount = bindGroupEntries.size(),
       .entries = bindGroupEntries.data(),
   };
-  target.bindGroup = webgpu::g_device.CreateBindGroup(&bindGroupDesc);
+  return webgpu::g_device.CreateBindGroup(&bindGroupDesc);
 }
 
 void WebGPURenderInterface::EnsureFrameTargets(const wgpu::Extent3D& size) {
@@ -741,7 +744,6 @@ void WebGPURenderInterface::EnsureFrameTargets(const wgpu::Extent3D& size) {
     m_layers.resize(1);
   }
 
-  EnsureRenderTarget(m_layers[0], "RmlUi Base Layer", size);
   EnsureRenderTarget(m_postprocessTargets[0], "RmlUi Postprocess A", size);
   EnsureRenderTarget(m_postprocessTargets[1], "RmlUi Postprocess B", size);
   EnsureRenderTarget(m_postprocessTargets[2], "RmlUi Postprocess C", size);
@@ -1041,38 +1043,30 @@ void WebGPURenderInterface::RenderFilters(Rml::Span<const Rml::CompiledFilterHan
   EndActivePass();
 }
 
-void WebGPURenderInterface::BeginFrame(const wgpu::CommandEncoder& encoder, const wgpu::TextureView& outputView,
-                                       const wgpu::Extent3D& size, const gfx::Viewport& viewport) {
+void WebGPURenderInterface::BeginFrame(const wgpu::CommandEncoder& encoder,
+                                       const webgpu::TextureWithSampler& target) {
   m_encoder = encoder;
-  m_outputView = outputView;
-  m_frameSize = size;
-  m_viewport = viewport;
+  m_frameSize = target.size;
+  m_viewport = {
+      .left = 0.f,
+      .top = 0.f,
+      .width = static_cast<float>(target.size.width),
+      .height = static_cast<float>(target.size.height),
+      .znear = 0.f,
+      .zfar = 1.f,
+  };
   m_nextLayer = 1;
   m_layerStack = {0};
   m_activeLayer = 0;
 
   NewFrame();
-  EnsureFrameTargets(size);
-
-  const std::array copyAttachments{
-      wgpu::RenderPassColorAttachment{
-          .view = m_layers[0].view,
-          .loadOp = wgpu::LoadOp::Clear,
-          .storeOp = wgpu::StoreOp::Store,
-          .clearValue = {0.f, 0.f, 0.f, 0.f},
-      },
+  EnsureFrameTargets(target.size);
+  m_layers[0] = {
+      .texture = target.texture,
+      .view = target.view,
+      .bindGroup = CreateImageBindGroup(target.view),
+      .size = target.size,
   };
-  const wgpu::RenderPassDescriptor copyPassDesc{
-      .label = "RmlUi game frame copy pass",
-      .colorAttachmentCount = copyAttachments.size(),
-      .colorAttachments = copyAttachments.data(),
-  };
-  m_pass = m_encoder.BeginRenderPass(&copyPassDesc);
-  ApplyViewport();
-  m_pass.SetPipeline(webgpu::g_CopyPipeline);
-  m_pass.SetBindGroup(0, webgpu::g_CopyBindGroup, 0, nullptr);
-  m_pass.Draw(3);
-  EndActivePass();
 
   BeginRenderTargetPass(m_layers[0].view, wgpu::LoadOp::Load, "RmlUi base layer pass", true);
 }
@@ -1080,35 +1074,11 @@ void WebGPURenderInterface::BeginFrame(const wgpu::CommandEncoder& encoder, cons
 void WebGPURenderInterface::EndFrame() {
   EndActivePass();
 
-  const wgpu::RenderPassDepthStencilAttachment depthStencilAttachment{
-      .view = GetClipMaskStencilView(m_frameSize),
-      .stencilLoadOp = wgpu::LoadOp::Load,
-      .stencilStoreOp = wgpu::StoreOp::Store,
-  };
-  const std::array attachments{
-      wgpu::RenderPassColorAttachment{
-          .view = m_outputView,
-          .loadOp = wgpu::LoadOp::Clear,
-          .storeOp = wgpu::StoreOp::Store,
-          .clearValue = {0.f, 0.f, 0.f, 0.f},
-      },
-  };
-  const wgpu::RenderPassDescriptor renderPassDesc{
-      .label = "RmlUi output copy pass",
-      .colorAttachmentCount = attachments.size(),
-      .colorAttachments = attachments.data(),
-      .depthStencilAttachment = &depthStencilAttachment,
-  };
-  m_pass = m_encoder.BeginRenderPass(&renderPassDesc);
-  m_pass.SetViewport(0.f, 0.f, static_cast<float>(m_frameSize.width), static_cast<float>(m_frameSize.height), 0.f, 1.f);
-  m_pass.SetScissorRect(0, 0, m_frameSize.width, m_frameSize.height);
-  m_pass.SetStencilReference(0);
-  DrawFullscreenTexture(m_layers[0].bindGroup, m_blitPipelines[static_cast<size_t>(BlitPipelineType::Replace)]);
-  EndActivePass();
-
   m_layerStack.clear();
+  if (!m_layers.empty()) {
+    m_layers[0] = {};
+  }
   m_encoder = nullptr;
-  m_outputView = nullptr;
 }
 
 Rml::LayerHandle WebGPURenderInterface::PushLayer() {

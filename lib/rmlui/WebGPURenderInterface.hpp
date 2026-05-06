@@ -7,6 +7,10 @@
 #include "../gfx/clear.hpp"
 #include "RmlUi/Core/RenderInterface.h"
 
+namespace aurora::webgpu {
+struct TextureWithSampler;
+} // namespace aurora::webgpu
+
 namespace aurora::rmlui {
 
 inline constexpr uint32_t MaxHighQualityBlurRadius = 64;
@@ -92,7 +96,6 @@ class WebGPURenderInterface : public Rml::RenderInterface {
   };
 
   wgpu::CommandEncoder m_encoder;
-  wgpu::TextureView m_outputView;
   wgpu::RenderPassEncoder m_pass;
 
   std::array<wgpu::RenderPipeline, static_cast<size_t>(PipelineType::Count)> m_pipelines;
@@ -156,6 +159,7 @@ class WebGPURenderInterface : public Rml::RenderInterface {
 
   void EnsureRenderTarget(RenderTarget& target, const char* label, const wgpu::Extent3D& size);
   void EnsureFrameTargets(const wgpu::Extent3D& size);
+  wgpu::BindGroup CreateImageBindGroup(const wgpu::TextureView& view) const;
   Rml::Rectanglei GetActiveScissorRegion() const;
   TexCoordLimits GetPostprocessTexCoordLimits() const;
   TexCoordLimits GetPostprocessTexCoordLimits(Rml::Rectanglei region) const;
@@ -205,8 +209,7 @@ public:
                     Rml::TextureHandle texture) override;
   void ReleaseShader(Rml::CompiledShaderHandle shader) override;
 
-  void BeginFrame(const wgpu::CommandEncoder& encoder, const wgpu::TextureView& outputView, const wgpu::Extent3D& size,
-                  const gfx::Viewport& viewport);
+  void BeginFrame(const wgpu::CommandEncoder& encoder, const webgpu::TextureWithSampler& target);
   void EndFrame();
   void SetWindowSize(const Rml::Vector2i& window_size) { m_windowSize = window_size; }
   void SetRenderTargetFormat(wgpu::TextureFormat render_target_format) { m_renderTargetFormat = render_target_format; }

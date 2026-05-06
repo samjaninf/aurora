@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../internal.hpp"
+#include "../webgpu/gpu.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -208,20 +209,7 @@ struct ClipRect {
   bool operator!=(const ClipRect& rhs) const { return !(*this == rhs); }
 };
 
-struct Viewport {
-  float left;
-  float top;
-  float width;
-  float height;
-  float znear;
-  float zfar;
-
-  bool operator==(const Viewport& rhs) const {
-    return left == rhs.left && top == rhs.top && width == rhs.width && height == rhs.height && znear == rhs.znear &&
-           zfar == rhs.zfar;
-  }
-  bool operator!=(const Viewport& rhs) const { return !(*this == rhs); }
-};
+using webgpu::Viewport;
 
 struct TextureRef;
 using TextureHandle = std::shared_ptr<TextureRef>;

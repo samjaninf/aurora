@@ -1,7 +1,7 @@
 #include "gpu.hpp"
 
 #include <array>
-#include <cstddef>
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -9,7 +9,6 @@
 #include <aurora/aurora.h>
 #include <aurora/gfx.h>
 #include <magic_enum.hpp>
-#include <webgpu/webgpu.h>
 #include <webgpu/webgpu_cpp.h>
 
 #include "../gfx/common.hpp"
@@ -124,6 +123,38 @@ TextureWithSampler create_render_texture(uint32_t width, uint32_t height, bool m
       .size = size,
       .format = format,
       .sampler = std::move(sampler),
+  };
+}
+
+const TextureWithSampler& present_source() noexcept {
+  return g_graphicsConfig.msaaSamples > 1 ? g_frameBufferResolved : g_frameBuffer;
+}
+
+Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
+                                    uint32_t content_height) noexcept {
+  if (surface_width == 0 || surface_height == 0 || content_width == 0 || content_height == 0) {
+    return {};
+  }
+
+  uint32_t viewport_width = surface_width;
+  uint32_t viewport_height = std::min<uint32_t>(
+      surface_height, std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(static_cast<double>(viewport_width) *
+                                                                               static_cast<double>(content_height) /
+                                                                               static_cast<double>(content_width)))));
+  if (viewport_height == surface_height) {
+    viewport_width = std::min<uint32_t>(
+        surface_width, std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(static_cast<double>(viewport_height) *
+                                                                                static_cast<double>(content_width) /
+                                                                                static_cast<double>(content_height)))));
+  }
+
+  return {
+      .left = static_cast<float>((surface_width - viewport_width) / 2),
+      .top = static_cast<float>((surface_height - viewport_height) / 2),
+      .width = static_cast<float>(viewport_width),
+      .height = static_cast<float>(viewport_height),
+      .znear = 0.f,
+      .zfar = 1.f,
   };
 }
 
@@ -277,15 +308,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   g_CopyPipeline = g_device.CreateRenderPipeline(&pipelineDescriptor);
 }
 
-void create_copy_bind_group() {
+wgpu::BindGroup create_copy_bind_group(const TextureWithSampler& source) {
   const std::array bindGroupEntries{
       wgpu::BindGroupEntry{
           .binding = 0,
-          .sampler = g_graphicsConfig.msaaSamples > 1 ? g_frameBufferResolved.sampler : g_frameBuffer.sampler,
+          .sampler = source.sampler,
       },
       wgpu::BindGroupEntry{
           .binding = 1,
-          .textureView = g_graphicsConfig.msaaSamples > 1 ? g_frameBufferResolved.view : g_frameBuffer.view,
+          .textureView = source.view,
       },
   };
   const wgpu::BindGroupDescriptor bindGroupDescriptor{
@@ -293,7 +324,7 @@ void create_copy_bind_group() {
       .entryCount = bindGroupEntries.size(),
       .entries = bindGroupEntries.data(),
   };
-  g_CopyBindGroup = g_device.CreateBindGroup(&bindGroupDescriptor);
+  return g_device.CreateBindGroup(&bindGroupDescriptor);
 }
 
 static wgpu::BackendType to_wgpu_backend(AuroraBackend backend) {
@@ -668,7 +699,7 @@ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, ui
   g_frameBuffer = create_render_texture(width, height, true);
   g_frameBufferResolved = create_render_texture(width, height, false);
   g_depthBuffer = create_depth_texture(width, height);
-  create_copy_bind_group();
+  g_CopyBindGroup = create_copy_bind_group(present_source());
 }
 } // namespace aurora::webgpu
 

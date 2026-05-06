@@ -69,36 +69,6 @@ constexpr std::array<AuroraBackend, 0> PreferredBackendOrder{};
 
 bool g_initialFrame = false;
 
-#ifdef AURORA_ENABLE_GX
-gfx::Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
-                                         uint32_t content_height) {
-  if (surface_width == 0 || surface_height == 0 || content_width == 0 || content_height == 0) {
-    return {};
-  }
-
-  uint32_t viewport_width = surface_width;
-  uint32_t viewport_height = std::min<uint32_t>(
-      surface_height, std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(static_cast<double>(viewport_width) *
-                                                                               static_cast<double>(content_height) /
-                                                                               static_cast<double>(content_width)))));
-  if (viewport_height == surface_height) {
-    viewport_width = std::min<uint32_t>(
-        surface_width, std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(static_cast<double>(viewport_height) *
-                                                                                static_cast<double>(content_width) /
-                                                                                static_cast<double>(content_height)))));
-  }
-
-  return {
-      .left = static_cast<float>((surface_width - viewport_width) / 2),
-      .top = static_cast<float>((surface_height - viewport_height) / 2),
-      .width = static_cast<float>(viewport_width),
-      .height = static_cast<float>(viewport_height),
-      .znear = 0.f,
-      .zfar = 1.f,
-  };
-}
-#endif
-
 AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexcept {
   g_config = config;
   Log.info("Aurora initializing");
@@ -270,19 +240,18 @@ void end_frame() noexcept {
   auto encoder = g_device.CreateCommandEncoder(&encoderDescriptor);
   gfx::end_frame(encoder);
   gfx::render(encoder);
-  const auto viewport = calculate_present_viewport(webgpu::g_graphicsConfig.surfaceConfiguration.width,
-                                                   webgpu::g_graphicsConfig.surfaceConfiguration.height,
-                                                   webgpu::g_frameBuffer.size.width, webgpu::g_frameBuffer.size.height);
+  const auto& presentSource = webgpu::present_source();
+  auto viewport = webgpu::calculate_present_viewport(webgpu::g_graphicsConfig.surfaceConfiguration.width,
+                                                     webgpu::g_graphicsConfig.surfaceConfiguration.height,
+                                                     presentSource.size.width, presentSource.size.height);
+  wgpu::BindGroup presentBindGroup = webgpu::g_CopyBindGroup;
 #if AURORA_ENABLE_RMLUI
   if (rmlui::is_initialized()) {
-    rmlui::render(encoder, g_currentView,
-                  {
-                      .width = webgpu::g_graphicsConfig.surfaceConfiguration.width,
-                      .height = webgpu::g_graphicsConfig.surfaceConfiguration.height,
-                      .depthOrArrayLayers = 1,
-                  },
-                  viewport);
-  } else
+    const auto rmlOutput = rmlui::render(encoder, viewport);
+    if (rmlOutput.texture != nullptr) {
+      presentBindGroup = rmlOutput.copyBindGroup;
+    }
+  }
 #endif
   {
     const std::array attachments{
@@ -300,7 +269,7 @@ void end_frame() noexcept {
     const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
     // Copy EFB -> XFB (swapchain)
     pass.SetPipeline(webgpu::g_CopyPipeline);
-    pass.SetBindGroup(0, webgpu::g_CopyBindGroup, 0, nullptr);
+    pass.SetBindGroup(0, presentBindGroup, 0, nullptr);
     pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height, viewport.znear, viewport.zfar);
 
     pass.Draw(3);
@@ -320,7 +289,8 @@ void end_frame() noexcept {
         .colorAttachments = attachments.data(),
     };
     const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
-    pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height, viewport.znear, viewport.zfar);
+    pass.SetViewport(0.f, 0.f, static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.width),
+                     static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.height), 0.f, 1.f);
     imgui::render(pass);
     pass.End();
   }

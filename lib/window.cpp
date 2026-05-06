@@ -34,6 +34,7 @@ Module Log("aurora::window");
 SDL_Window* g_window;
 SDL_Renderer* g_renderer;
 float g_frameBufferScale = 0.f;
+bool g_frameBufferAspectFit = false;
 AuroraWindowSize g_windowSize;
 std::vector<AuroraEvent> g_events;
 
@@ -61,6 +62,25 @@ Vec2<int> scale_frame_buffer_to_aspect(int base_width, int base_height, float sc
   return {
       scaled_base_width,
       std::max(1, static_cast<int>(std::lround(static_cast<float>(scaled_base_width) / aspect))),
+  };
+}
+
+Vec2<int> fit_frame_buffer_to_aspect(int width, int height, float aspect) {
+  if (width <= 0 || height <= 0 || aspect <= 0.f) {
+    return {std::max(width, 1), std::max(height, 1)};
+  }
+
+  const float targetAspect = static_cast<float>(width) / static_cast<float>(height);
+  if (targetAspect > aspect) {
+    return {
+        std::max(1, static_cast<int>(std::lround(static_cast<float>(height) * aspect))),
+        height,
+    };
+  }
+
+  return {
+      width,
+      std::max(1, static_cast<int>(std::lround(static_cast<float>(width) / aspect))),
   };
 }
 
@@ -380,6 +400,15 @@ AuroraWindowSize get_window_size() {
     fb_w = scaledW;
     fb_h = scaledH;
   }
+  if (g_frameBufferAspectFit) {
+    const auto [baseW, baseH] = vi::configured_fb_size();
+    if (baseW > 0 && baseH > 0) {
+      const auto [fitW, fitH] =
+          fit_frame_buffer_to_aspect(fb_w, fb_h, static_cast<float>(baseW) / static_cast<float>(baseH));
+      fb_w = fitW;
+      fb_h = fitH;
+    }
+  }
 
   const float scale = SDL_GetWindowDisplayScale(g_window);
   return {
@@ -426,6 +455,13 @@ static void push_future_resize_event() {
   TRY_WARN(SDL_PushEvent(&event), "Failed to push SDL event for future resize: {}", SDL_GetError());
 }
 
+void request_frame_buffer_resize() {
+  if (g_window != nullptr) {
+    // Defer so that we don't try to reconfigure the surface in the middle of game logic.
+    push_future_resize_event();
+  }
+}
+
 void set_frame_buffer_scale(float scale) {
   if (scale < 0.f) {
     scale = 0.f;
@@ -434,10 +470,16 @@ void set_frame_buffer_scale(float scale) {
     return;
   }
   g_frameBufferScale = scale;
-  if (g_window != nullptr) {
-    // Defer so that we don't try to reconfigure the surface in the middle of game logic.
-    push_future_resize_event();
+  request_frame_buffer_resize();
+}
+
+void set_frame_buffer_aspect_fit(bool fit) {
+  if (g_frameBufferAspectFit == fit) {
+    return;
   }
+
+  g_frameBufferAspectFit = fit;
+  request_frame_buffer_resize();
 }
 
 } // namespace aurora::window
