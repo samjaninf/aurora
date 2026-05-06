@@ -40,6 +40,24 @@
 #define PAD_BUTTON_Y 0x0800
 #define PAD_BUTTON_MENU 0x1000
 #define PAD_BUTTON_START 0x1000
+#ifdef TARGET_PC
+#define PAD_BUTTON_BACK 0x0002000
+#define PAD_BUTTON_GUIDE 0x0004000
+#define PAD_BUTTON_MISC1 0x0008000
+#define PAD_BUTTON_MISC2 0x0010000
+#define PAD_BUTTON_MISC3 0x0020000
+#define PAD_BUTTON_MISC4 0x0040000
+#define PAD_BUTTON_MISC5 0x0080000
+#define PAD_BUTTON_MISC6 0x0100000
+#define PAD_BUTTON_RIGHT_PADDLE1 0x0200000
+#define PAD_BUTTON_LEFT_PADDLE1 0x0400000
+#define PAD_BUTTON_RIGHT_PADDLE2 0x0800000
+#define PAD_BUTTON_LEFT_PADDLE2 0x1000000
+#define PAD_BUTTON_RIGHT_STICK 0x2000000
+#define PAD_BUTTON_LEFT_STICK 0x4000000
+#define PAD_BUTTON_TOUCHPAD 0x8000000
+#define PAD_EXT_BUTTON_COUNT 15
+#endif
 
 #define PAD_BUTTON_COUNT 12
 
@@ -82,6 +100,9 @@ typedef struct PADStatus {
   u8 analogA;
   u8 analogB;
   s8 err;
+#ifdef TARGET_PC
+  u32 extButton;
+#endif
 } PADStatus;
 
 typedef enum PADAxisSign {
@@ -108,13 +129,14 @@ void PADControlAllMotors(const u32* cmdArr);
 void PADSetAnalogMode(u32 mode);
 
 #ifdef TARGET_PC
-#define PAD_KEY_INVALID      (-1)
-#define PAD_KEY_MOUSE_LEFT   (-2)
+#define PAD_KEY_INVALID (-1)
+#define PAD_KEY_MOUSE_LEFT (-2)
 #define PAD_KEY_MOUSE_MIDDLE (-3)
-#define PAD_KEY_MOUSE_RIGHT  (-4)
-#define PAD_KEY_MOUSE_X1     (-5)
-#define PAD_KEY_MOUSE_X2     (-6)
+#define PAD_KEY_MOUSE_RIGHT (-4)
+#define PAD_KEY_MOUSE_X1 (-5)
+#define PAD_KEY_MOUSE_X2 (-6)
 typedef u16 PADButton;
+typedef u32 PADExtButton;
 typedef u16 PADAxis;
 
 typedef struct PADKeyButtonBinding {
@@ -138,12 +160,10 @@ typedef struct PADDeadZones {
   u16 rightTriggerActivationZone;
 } PADDeadZones;
 
-
 typedef struct PADButtonMapping {
   u32 nativeButton;
   PADButton padButton;
 } PADButtonMapping;
-
 
 typedef struct PADAxisMapping {
   PADSignedNativeAxis nativeAxis;
@@ -231,6 +251,17 @@ BOOL PADGetSensorData(u32 port, PADSensorType sensor, f32* data, int nValues);
 BOOL PADSetRumbleIntensity(u32 port, u16 low, u16 high);
 BOOL PADGetRumbleIntensity(u32 port, u16* low, u16* high);
 BOOL PADSupportsRumbleIntensity(u32 port);
+
+typedef enum PADBatteryState {
+  PAD_BATTERYSTATE_ERROR = -1,
+  PAD_BATTERYSTATE_UNKNOWN,
+  PAD_BATTERYSTATE_ON_BATTERY,
+  PAD_BATTERYSTATE_NO_BATTERY,
+  PAD_BATTERYSTATE_CHARGING,
+  PAD_BATTERYSTATE_CHARGED,
+} PADBatteryState;
+
+PADBatteryState PADGetBatteryState(u32 port, f32* perc);
 
 #endif
 
