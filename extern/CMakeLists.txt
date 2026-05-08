@@ -133,6 +133,13 @@ if (AURORA_ENABLE_GX)
     message(STATUS "aurora: Using existing imgui")
   endif ()
 
+  if (TARGET imgui)
+    target_include_directories(imgui PUBLIC ${PROJECT_SOURCE_DIR}/include)
+    target_compile_definitions(imgui PUBLIC IMGUI_USER_CONFIG="aurora/imgui_config.h")
+    target_sources(imgui PRIVATE ${PROJECT_SOURCE_DIR}/lib/imgui_config.cpp)
+    target_link_libraries(imgui PRIVATE ${AURORA_SDL3_TARGET})
+  endif ()
+
   if (NOT TARGET sqlite3)
     message(STATUS "aurora: Fetching sqlite3")
     FetchContent_Declare(sqlite3
