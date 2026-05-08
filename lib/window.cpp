@@ -21,7 +21,7 @@
 #include <SDL3/SDL_pixels.h>
 
 #include <algorithm>
-#include <cmath>
+#include <atomic>
 #include <vector>
 
 #include "rmlui.hpp"
@@ -37,6 +37,8 @@ float g_frameBufferScale = 0.f;
 bool g_frameBufferAspectFit = false;
 AuroraWindowSize g_windowSize;
 std::vector<AuroraEvent> g_events;
+std::atomic_bool g_backgrounded = false;
+bool g_lastPaused = false;
 
 bool operator==(const AuroraWindowSize& lhs, const AuroraWindowSize& rhs) {
   return lhs.width == rhs.width && lhs.height == rhs.height && lhs.fb_width == rhs.fb_width &&
@@ -99,6 +101,118 @@ void set_window_icon() noexcept {
   TRY_WARN(SDL_SetWindowIcon(g_window, iconSurface), "Failed to set window icon: {}", SDL_GetError());
   SDL_DestroySurface(iconSurface);
 }
+
+bool SDLCALL lifecycle_event_watch(void*, SDL_Event* event) {
+  switch (event->type) {
+  case SDL_EVENT_WILL_ENTER_BACKGROUND:
+    g_backgrounded.store(true, std::memory_order_relaxed);
+    break;
+  case SDL_EVENT_WILL_ENTER_FOREGROUND:
+    g_backgrounded.store(false, std::memory_order_relaxed);
+    break;
+  default:
+    break;
+  }
+  return true;
+}
+
+void sync_paused() {
+  const bool paused = is_paused();
+  if (g_lastPaused == paused) {
+    return;
+  }
+  g_lastPaused = paused;
+  g_events.push_back(AuroraEvent{
+      .type = paused ? AURORA_PAUSED : AURORA_UNPAUSED,
+  });
+}
+
+void process_event(SDL_Event& event) {
+#ifdef AURORA_ENABLE_GX
+  imgui::process_event(event);
+#endif
+#ifdef AURORA_ENABLE_RMLUI
+  rmlui::handle_event(event);
+#endif
+
+  switch (event.type) {
+  case SDL_EVENT_RENDER_DEVICE_RESET: {
+    Log.info("Render device reset, recreating surface");
+#ifdef AURORA_ENABLE_GX
+    webgpu::refresh_surface(true);
+#endif
+    break;
+  }
+  case SDL_EVENT_WINDOW_MOVED: {
+    g_events.push_back(AuroraEvent{
+        .type = AURORA_WINDOW_MOVED,
+        .windowPos = {.x = event.window.data1, .y = event.window.data2},
+    });
+    break;
+  }
+  case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED: {
+    resize_swapchain();
+    g_events.push_back(AuroraEvent{
+        .type = AURORA_DISPLAY_SCALE_CHANGED,
+        .windowSize = get_window_size(),
+    });
+    break;
+  }
+  case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
+    resize_swapchain();
+    g_events.push_back(AuroraEvent{
+        .type = AURORA_WINDOW_RESIZED,
+        .windowSize = get_window_size(),
+    });
+    break;
+  }
+  case SDL_EVENT_GAMEPAD_ADDED: {
+    auto instance = input::add_controller(event.gdevice.which);
+    g_events.push_back(AuroraEvent{
+        .type = AURORA_CONTROLLER_ADDED,
+        .controller = instance,
+    });
+    break;
+  }
+  case SDL_EVENT_GAMEPAD_REMOVED: {
+    input::remove_controller(event.gdevice.which);
+    g_events.push_back(AuroraEvent{
+        .type = AURORA_CONTROLLER_REMOVED,
+        .controller = event.gdevice.which,
+    });
+    break;
+  }
+  case SDL_EVENT_MOUSE_WHEEL:
+    input::set_mouse_scroll(event.wheel.x, event.wheel.y);
+    break;
+  case SDL_EVENT_QUIT:
+    g_events.push_back(AuroraEvent{
+        .type = AURORA_EXIT,
+    });
+    break;
+  default:
+    if (event.type == g_sdlCustomEventsStart + CustomEvent::FutureResize) {
+      // Future resize event
+      resize_swapchain();
+      g_events.push_back(AuroraEvent{
+          .type = AURORA_WINDOW_RESIZED,
+          .windowSize = get_window_size(),
+      });
+    } else if (event.type == g_sdlCustomEventsStart + CustomEvent::RefreshSurface) {
+      // Refresh surface (vsync changed)
+#ifdef AURORA_ENABLE_GX
+      webgpu::refresh_surface(false);
+#endif
+    }
+    break;
+  }
+
+  sync_paused();
+  g_events.push_back(AuroraEvent{
+      .type = AURORA_SDL_EVENT,
+      .sdl = event,
+  });
+}
 } // namespace
 
 const AuroraEvent* poll_events() {
@@ -107,117 +221,15 @@ const AuroraEvent* poll_events() {
   SDL_Event event;
   // Clear out the previous scroll values to prevent ghost input
   input::set_mouse_scroll(0, 0);
+  if (is_paused()) {
+    if (SDL_WaitEvent(&event)) {
+      process_event(event);
+    } else {
+      Log.warn("SDL_WaitEvent failed: {}", SDL_GetError());
+    }
+  }
   while (SDL_PollEvent(&event)) {
-#ifdef AURORA_ENABLE_GX
-    imgui::process_event(event);
-#endif
-#ifdef AURORA_ENABLE_RMLUI
-    rmlui::handle_event(event);
-#endif
-
-    switch (event.type) {
-    case SDL_EVENT_WINDOW_MINIMIZED: {
-      // Android/iOS: Application backgrounded
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_PAUSED,
-      });
-      break;
-    }
-    case SDL_EVENT_WINDOW_RESTORED: {
-      // Android/iOS: Application focused
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_UNPAUSED,
-      });
-      break;
-    }
-    case SDL_EVENT_RENDER_DEVICE_RESET: {
-      Log.info("Render device reset, recreating surface");
-#ifdef AURORA_ENABLE_GX
-      webgpu::refresh_surface(true);
-#endif
-      break;
-    }
-#if defined(ANDROID)
-    case SDL_EVENT_WINDOW_FOCUS_LOST: {
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_PAUSED,
-      });
-      break;
-    }
-    case SDL_EVENT_WINDOW_FOCUS_GAINED: {
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_UNPAUSED,
-      });
-      break;
-    }
-#endif
-    case SDL_EVENT_WINDOW_MOVED: {
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_WINDOW_MOVED,
-          .windowPos = {.x = event.window.data1, .y = event.window.data2},
-      });
-      break;
-    }
-    case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED: {
-      resize_swapchain();
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_DISPLAY_SCALE_CHANGED,
-          .windowSize = get_window_size(),
-      });
-      break;
-    }
-    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
-      resize_swapchain();
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_WINDOW_RESIZED,
-          .windowSize = get_window_size(),
-      });
-      break;
-    }
-    case SDL_EVENT_GAMEPAD_ADDED: {
-      auto instance = input::add_controller(event.gdevice.which);
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_CONTROLLER_ADDED,
-          .controller = instance,
-      });
-      break;
-    }
-    case SDL_EVENT_GAMEPAD_REMOVED: {
-      input::remove_controller(event.gdevice.which);
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_CONTROLLER_REMOVED,
-          .controller = event.gdevice.which,
-      });
-      break;
-    }
-    case SDL_EVENT_MOUSE_WHEEL:
-      input::set_mouse_scroll(event.wheel.x, event.wheel.y);
-      break;
-    case SDL_EVENT_QUIT:
-      g_events.push_back(AuroraEvent{
-          .type = AURORA_EXIT,
-      });
-    default:
-      if (event.type == g_sdlCustomEventsStart) {
-        // Future resize event
-        resize_swapchain();
-        g_events.push_back(AuroraEvent{
-            .type = AURORA_WINDOW_RESIZED,
-            .windowSize = get_window_size(),
-        });
-      } else if (event.type == g_sdlCustomEventsStart + 1) {
-        // Refresh surface (vsync changed)
-#ifdef AURORA_ENABLE_GX
-        webgpu::refresh_surface(false);
-#endif
-      }
-      break;
-    }
-
-    g_events.push_back(AuroraEvent{
-        .type = AURORA_SDL_EVENT,
-        .sdl = event,
-    });
+    process_event(event);
   }
   g_events.push_back(AuroraEvent{
       .type = AURORA_NONE,
@@ -336,6 +348,8 @@ void show_window() {
 
 bool initialize() {
   /* We don't want to initialize anything input related here, otherwise the add events will get lost to the void */
+  TRY(SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight"), "Error setting {}: {}", SDL_HINT_ORIENTATIONS,
+      SDL_GetError());
   TRY(SDL_InitSubSystem(SDL_INIT_EVENTS | SDL_INIT_VIDEO), "Error initializing SDL: {}", SDL_GetError());
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -356,7 +370,13 @@ bool initialize() {
   return true;
 }
 
+bool initialize_event_watch() {
+  TRY(SDL_AddEventWatch(lifecycle_event_watch, nullptr), "Error adding SDL event watch: {}", SDL_GetError());
+  return true;
+}
+
 void shutdown() {
+  SDL_RemoveEventWatch(lifecycle_event_watch, nullptr);
   destroy_window();
   TRY_WARN(SDL_EnableScreenSaver(), "Error enabling screensaver: {}", SDL_GetError());
   SDL_Quit();
@@ -407,6 +427,24 @@ SDL_Window* get_sdl_window() { return g_window; }
 
 SDL_Renderer* get_sdl_renderer() { return g_renderer; }
 
+bool is_paused() noexcept {
+  if (!is_presentable()) {
+    return true;
+  }
+  const auto flags = SDL_GetWindowFlags(g_window);
+  if ((flags & SDL_WINDOW_HIDDEN) != 0u) {
+    return true;
+  }
+  return g_config.pauseOnFocusLost && ((flags & SDL_WINDOW_INPUT_FOCUS) == 0u || (flags & SDL_WINDOW_MINIMIZED) != 0u);
+}
+
+bool is_presentable() noexcept { return g_window != nullptr && !g_backgrounded.load(std::memory_order_relaxed); }
+
+bool push_custom_event(CustomEvent eventType) {
+  SDL_Event event{.type = g_sdlCustomEventsStart + eventType};
+  return SDL_PushEvent(&event);
+}
+
 void set_title(const char* title) {
   TRY_WARN(SDL_SetWindowTitle(g_window, title), "Failed to set window title: {}", SDL_GetError());
 }
@@ -432,8 +470,8 @@ void center_window() {
 }
 
 static void push_future_resize_event() {
-  SDL_Event event{.type = g_sdlCustomEventsStart};
-  TRY_WARN(SDL_PushEvent(&event), "Failed to push SDL event for future resize: {}", SDL_GetError());
+  TRY_WARN(push_custom_event(CustomEvent::FutureResize), "Failed to push SDL event for future resize: {}",
+           SDL_GetError());
 }
 
 void request_frame_buffer_resize() {
@@ -462,5 +500,7 @@ void set_frame_buffer_aspect_fit(bool fit) {
   g_frameBufferAspectFit = fit;
   request_frame_buffer_resize();
 }
+
+void set_background_input(bool value) { SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, value ? "1" : "0"); }
 
 } // namespace aurora::window

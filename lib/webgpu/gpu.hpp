@@ -53,6 +53,7 @@ extern wgpu::Instance g_instance;
 
 bool initialize(AuroraBackend backend);
 void shutdown();
+void release_surface() noexcept;
 bool refresh_surface(bool recreate = true);
 void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, uint32_t native_height,
                       bool force = false);

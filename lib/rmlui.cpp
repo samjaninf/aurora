@@ -48,15 +48,6 @@ Rml::Vector2i presentation_dimensions_from_window_size(const AuroraWindowSize& s
   return dimensions_from_viewport(viewport);
 }
 
-float density_ratio_for_window(const AuroraWindowSize& size) noexcept {
-  if (size.width == 0 || size.height == 0 || size.native_fb_width == 0 || size.native_fb_height == 0) {
-    return 1.f;
-  }
-
-  return std::min(static_cast<float>(size.native_fb_width) / static_cast<float>(size.width),
-                  static_cast<float>(size.native_fb_height) / static_cast<float>(size.height));
-}
-
 void sync_context_metrics(Rml::Vector2i dimensions) noexcept {
   if (g_context == nullptr || dimensions.x <= 0 || dimensions.y <= 0) {
     return;
@@ -64,7 +55,7 @@ void sync_context_metrics(Rml::Vector2i dimensions) noexcept {
   if (g_context->GetDimensions() != dimensions) {
     g_context->SetDimensions(dimensions);
   }
-  const float ratio = density_ratio_for_window(window::get_window_size());
+  const float ratio = window::get_window_size().scale;
   if (g_context->GetDensityIndependentPixelRatio() != ratio) {
     g_context->SetDensityIndependentPixelRatio(ratio);
   }

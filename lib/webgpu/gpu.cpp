@@ -390,6 +390,7 @@ static bool create_surface() {
       .nextInChain = chainedDescriptor.get(),
       .label = "Surface",
   };
+  release_surface();
   g_surface = g_instance.CreateSurface(&surfaceDescriptor);
   if (!g_surface) {
     Log.error("Failed to create surface");
@@ -655,8 +656,19 @@ void shutdown() {
   cache_shutdown();
 }
 
+void release_surface() noexcept {
+  if (g_surface) {
+    g_surface.Unconfigure();
+  }
+  g_surface = {};
+}
+
 bool refresh_surface(bool recreate) {
   if (!g_instance || !g_device) {
+    return false;
+  }
+  if (!window::is_presentable()) {
+    release_surface();
     return false;
   }
   if ((!g_surface || recreate) && !create_surface()) {
@@ -707,6 +719,5 @@ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, ui
 
 void aurora_enable_vsync(const bool enabled) {
   aurora::webgpu::g_graphicsConfig.surfaceConfiguration.presentMode = aurora::webgpu::best_present_mode(enabled);
-  SDL_Event event{.type = aurora::g_sdlCustomEventsStart + 1};
-  SDL_PushEvent(&event);
+  aurora::window::push_custom_event(aurora::window::CustomEvent::RefreshSurface);
 }

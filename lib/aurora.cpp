@@ -92,6 +92,7 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
 
   g_sdlCustomEventsStart = SDL_RegisterEvents(2);
   ASSERT(g_sdlCustomEventsStart, "Failed to allocate user events: {}", SDL_GetError());
+  ASSERT(window::initialize_event_watch(), "Error initializing SDL event watch");
 
 #ifdef AURORA_ENABLE_GX
   /* Attempt to create a window using the calling application's desired backend */
@@ -162,8 +163,6 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
   };
 }
 
-void aurora_set_log_level(AuroraLogLevel level) noexcept { g_config.logLevel = level; }
-
 #ifdef AURORA_ENABLE_GX
 wgpu::TextureView g_currentView;
 #endif
@@ -194,6 +193,13 @@ const AuroraEvent* update() noexcept {
 bool begin_frame() noexcept {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
+  if (!window::is_presentable()) {
+    webgpu::release_surface();
+    return false;
+  }
+  if (window::is_paused()) {
+    return false;
+  }
   if (!g_surface) {
     webgpu::refresh_surface(true);
     if (!g_surface) {
@@ -216,8 +222,8 @@ bool begin_frame() noexcept {
     return false;
   case wgpu::SurfaceGetCurrentTextureStatus::Lost:
   case wgpu::SurfaceGetCurrentTextureStatus::Error:
-    Log.warn("Surface texture is {}, recreating surface", magic_enum::enum_name(surfaceTexture.status));
-    webgpu::refresh_surface(true);
+    Log.warn("Surface texture is {}, releasing surface", magic_enum::enum_name(surfaceTexture.status));
+    webgpu::release_surface();
     return false;
   default:
     Log.error("Failed to get surface texture: {}", magic_enum::enum_name(surfaceTexture.status));
@@ -298,9 +304,13 @@ void end_frame() noexcept {
   const auto buffer = encoder.Finish(&cmdBufDescriptor);
   g_queue.Submit(1, &buffer);
   gfx::after_submit();
-  auto presentStatus = g_surface.Present();
-  if (presentStatus != wgpu::Status::Success) {
-    Log.warn("Surface present failed: {}", static_cast<int>(presentStatus));
+  if (window::is_presentable()) {
+    auto presentStatus = g_surface.Present();
+    if (presentStatus != wgpu::Status::Success) {
+      Log.warn("Surface present failed: {}", static_cast<int>(presentStatus));
+    }
+  } else {
+    Log.info("Skipping present; window not presentable");
   }
   g_currentView = {};
 
@@ -335,6 +345,14 @@ bool aurora_begin_frame() { return aurora::begin_frame(); }
 void aurora_end_frame() { aurora::end_frame(); }
 AuroraBackend aurora_get_backend() { return aurora::g_config.desiredBackend; }
 const AuroraBackend* aurora_get_available_backends(size_t* count) {
-  *count = aurora::PreferredBackendOrder.size();
+  if (count != nullptr) {
+    *count = aurora::PreferredBackendOrder.size();
+  }
   return aurora::PreferredBackendOrder.data();
+}
+void aurora_set_log_level(AuroraLogLevel level) { aurora::g_config.logLevel = level; }
+void aurora_set_pause_on_focus_lost(bool value) { aurora::g_config.pauseOnFocusLost = value; }
+void aurora_set_background_input(bool value) {
+  aurora::g_config.allowJoystickBackgroundEvents = value;
+  aurora::window::set_background_input(value);
 }
