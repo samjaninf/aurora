@@ -15,6 +15,17 @@ enum class CustomEvent {
 };
 static Uint32 operator+(Uint32 lhs, CustomEvent rhs) { return lhs + static_cast<Uint32>(rhs); }
 
+// On Android in particular, we need to hold a mutex around critical areas like surface creation
+// and presentation, so that the SDLActivity doesn't destroy the surface out from underneath us.
+class SurfaceLock {
+public:
+  SurfaceLock() noexcept;
+  ~SurfaceLock();
+
+  SurfaceLock(const SurfaceLock&) = delete;
+  SurfaceLock& operator=(const SurfaceLock&) = delete;
+};
+
 bool initialize();
 bool initialize_event_watch();
 bool push_custom_event(CustomEvent eventType);
@@ -29,6 +40,7 @@ SDL_Window* get_sdl_window();
 SDL_Renderer* get_sdl_renderer();
 bool is_paused() noexcept;
 bool is_presentable() noexcept;
+void set_surface_ready(bool ready) noexcept;
 void set_title(const char* title);
 void set_fullscreen(bool fullscreen);
 bool get_fullscreen();

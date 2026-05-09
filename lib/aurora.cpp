@@ -193,47 +193,51 @@ const AuroraEvent* update() noexcept {
 bool begin_frame() noexcept {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
-  if (!window::is_presentable()) {
-    webgpu::release_surface();
-    return false;
-  }
-  if (window::is_paused()) {
-    return false;
-  }
-  if (!g_surface) {
-    webgpu::refresh_surface(true);
-    if (!g_surface) {
+  {
+    window::SurfaceLock surfaceLock;
+    if (!window::is_presentable()) {
+      webgpu::release_surface();
       return false;
     }
-  }
-  wgpu::SurfaceTexture surfaceTexture;
-  g_surface.GetCurrentTexture(&surfaceTexture);
-  switch (surfaceTexture.status) {
-  case wgpu::SurfaceGetCurrentTextureStatus::SuccessOptimal:
-    g_currentView = surfaceTexture.texture.CreateView();
-    break;
-  case wgpu::SurfaceGetCurrentTextureStatus::Timeout:
-    Log.warn("Surface texture acquisition timed out");
-    return false;
-  case wgpu::SurfaceGetCurrentTextureStatus::SuccessSuboptimal:
-  case wgpu::SurfaceGetCurrentTextureStatus::Outdated:
-    Log.info("Surface texture is {}, reconfiguring swapchain", magic_enum::enum_name(surfaceTexture.status));
-    webgpu::refresh_surface(false);
-    return false;
-  case wgpu::SurfaceGetCurrentTextureStatus::Lost:
-    Log.warn("Surface texture is {}, releasing surface", magic_enum::enum_name(surfaceTexture.status));
-    webgpu::release_surface();
-  case wgpu::SurfaceGetCurrentTextureStatus::Error:
-    Log.warn("Surface texture is {}, dropping surface", magic_enum::enum_name(surfaceTexture.status));
-    g_surface = {};
-    return false;
-  default:
-    Log.error("Failed to get surface texture: {}", magic_enum::enum_name(surfaceTexture.status));
-    return false;
+    if (window::is_paused()) {
+      return false;
+    }
+    if (!g_surface) {
+      webgpu::refresh_surface(true);
+      if (!g_surface) {
+        return false;
+      }
+    }
+    wgpu::SurfaceTexture surfaceTexture;
+    g_surface.GetCurrentTexture(&surfaceTexture);
+    switch (surfaceTexture.status) {
+    case wgpu::SurfaceGetCurrentTextureStatus::SuccessOptimal:
+      g_currentView = surfaceTexture.texture.CreateView();
+      break;
+    case wgpu::SurfaceGetCurrentTextureStatus::Timeout:
+      Log.warn("Surface texture acquisition timed out");
+      return false;
+    case wgpu::SurfaceGetCurrentTextureStatus::SuccessSuboptimal:
+    case wgpu::SurfaceGetCurrentTextureStatus::Outdated:
+      Log.info("Surface texture is {}, reconfiguring swapchain", magic_enum::enum_name(surfaceTexture.status));
+      webgpu::refresh_surface(false);
+      return false;
+    case wgpu::SurfaceGetCurrentTextureStatus::Lost:
+      Log.warn("Surface texture is {}, releasing surface", magic_enum::enum_name(surfaceTexture.status));
+      webgpu::release_surface();
+    case wgpu::SurfaceGetCurrentTextureStatus::Error:
+      Log.warn("Surface texture is {}, dropping surface", magic_enum::enum_name(surfaceTexture.status));
+      g_surface = {};
+      return false;
+    default:
+      Log.error("Failed to get surface texture: {}", magic_enum::enum_name(surfaceTexture.status));
+      return false;
+    }
   }
 
   imgui::new_frame(window::get_window_size());
   if (!gfx::begin_frame()) {
+    g_currentView = {};
     return false;
   }
 #endif
@@ -250,74 +254,82 @@ void end_frame() noexcept {
   auto encoder = g_device.CreateCommandEncoder(&encoderDescriptor);
   gfx::end_frame(encoder);
   gfx::render(encoder);
-  const auto& presentSource = webgpu::present_source();
-  auto viewport = webgpu::calculate_present_viewport(webgpu::g_graphicsConfig.surfaceConfiguration.width,
-                                                     webgpu::g_graphicsConfig.surfaceConfiguration.height,
-                                                     presentSource.size.width, presentSource.size.height);
-  wgpu::BindGroup presentBindGroup = webgpu::g_CopyBindGroup;
-#if AURORA_ENABLE_RMLUI
-  if (rmlui::is_initialized()) {
-    const auto rmlOutput = rmlui::render(encoder, viewport);
-    if (rmlOutput.texture != nullptr) {
-      presentBindGroup = rmlOutput.copyBindGroup;
-    }
-  }
-#endif
   {
-    const std::array attachments{
-        wgpu::RenderPassColorAttachment{
-            .view = g_currentView,
-            .loadOp = wgpu::LoadOp::Clear,
-            .storeOp = wgpu::StoreOp::Store,
-        },
-    };
-    const wgpu::RenderPassDescriptor renderPassDescriptor{
-        .label = "EFB copy render pass",
-        .colorAttachmentCount = attachments.size(),
-        .colorAttachments = attachments.data(),
-    };
-    const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
-    // Copy EFB -> XFB (swapchain)
-    pass.SetPipeline(webgpu::g_CopyPipeline);
-    pass.SetBindGroup(0, presentBindGroup, 0, nullptr);
-    pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height, viewport.znear, viewport.zfar);
+    window::SurfaceLock surfaceLock;
+    if (window::is_presentable() && g_surface && g_currentView) {
+      const auto& presentSource = webgpu::present_source();
+      auto viewport = webgpu::calculate_present_viewport(webgpu::g_graphicsConfig.surfaceConfiguration.width,
+                                                         webgpu::g_graphicsConfig.surfaceConfiguration.height,
+                                                         presentSource.size.width, presentSource.size.height);
+      wgpu::BindGroup presentBindGroup = webgpu::g_CopyBindGroup;
+    #if AURORA_ENABLE_RMLUI
+      if (rmlui::is_initialized()) {
+        const auto rmlOutput = rmlui::render(encoder, viewport);
+        if (rmlOutput.texture != nullptr) {
+          presentBindGroup = rmlOutput.copyBindGroup;
+        }
+      }
+    #endif
+      {
+        const std::array attachments{
+            wgpu::RenderPassColorAttachment{
+                .view = g_currentView,
+                .loadOp = wgpu::LoadOp::Clear,
+                .storeOp = wgpu::StoreOp::Store,
+            },
+        };
+        const wgpu::RenderPassDescriptor renderPassDescriptor{
+            .label = "EFB copy render pass",
+            .colorAttachmentCount = attachments.size(),
+            .colorAttachments = attachments.data(),
+        };
+        const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
+        // Copy EFB -> XFB (swapchain)
+        pass.SetPipeline(webgpu::g_CopyPipeline);
+        pass.SetBindGroup(0, presentBindGroup, 0, nullptr);
+        pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height, viewport.znear, viewport.zfar);
 
-    pass.Draw(3);
-    pass.End();
-  }
-  {
-    const std::array attachments{
-        wgpu::RenderPassColorAttachment{
-            .view = g_currentView,
-            .loadOp = wgpu::LoadOp::Load,
-            .storeOp = wgpu::StoreOp::Store,
-        },
-    };
-    const wgpu::RenderPassDescriptor renderPassDescriptor{
-        .label = "ImGui render pass",
-        .colorAttachmentCount = attachments.size(),
-        .colorAttachments = attachments.data(),
-    };
-    const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
-    pass.SetViewport(0.f, 0.f, static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.width),
-                     static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.height), 0.f, 1.f);
-    imgui::render(pass);
-    pass.End();
-  }
-  const wgpu::CommandBufferDescriptor cmdBufDescriptor{.label = "Redraw command buffer"};
-  const auto buffer = encoder.Finish(&cmdBufDescriptor);
-  g_queue.Submit(1, &buffer);
-  gfx::after_submit();
-  if (window::is_presentable()) {
-    auto presentStatus = g_surface.Present();
-    if (presentStatus != wgpu::Status::Success) {
-      Log.warn("Surface present failed: {}", static_cast<int>(presentStatus));
+        pass.Draw(3);
+        pass.End();
+      }
+      {
+        const std::array attachments{
+            wgpu::RenderPassColorAttachment{
+                .view = g_currentView,
+                .loadOp = wgpu::LoadOp::Load,
+                .storeOp = wgpu::StoreOp::Store,
+            },
+        };
+        const wgpu::RenderPassDescriptor renderPassDescriptor{
+            .label = "ImGui render pass",
+            .colorAttachmentCount = attachments.size(),
+            .colorAttachments = attachments.data(),
+        };
+        const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
+        pass.SetViewport(0.f, 0.f, static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.width),
+                         static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.height), 0.f, 1.f);
+        imgui::render(pass);
+        pass.End();
+      }
+    } else {
+      Log.info("Skipping present; window not presentable");
+      webgpu::release_surface();
     }
-  } else {
-    Log.info("Skipping present; window not presentable");
-    webgpu::release_surface();
+    const wgpu::CommandBufferDescriptor cmdBufDescriptor{.label = "Redraw command buffer"};
+    const auto buffer = encoder.Finish(&cmdBufDescriptor);
+    g_queue.Submit(1, &buffer);
+    gfx::after_submit();
+    if (window::is_presentable() && g_surface) {
+      auto presentStatus = g_surface.Present();
+      if (presentStatus != wgpu::Status::Success) {
+        Log.warn("Surface present failed: {}", static_cast<int>(presentStatus));
+        webgpu::release_surface();
+      }
+    } else if (g_surface) {
+      webgpu::release_surface();
+    }
+    g_currentView = {};
   }
-  g_currentView = {};
 
   TracyPlotConfig("aurora: lastVertSize", tracy::PlotFormatType::Memory, false, true, 0);
   TracyPlotConfig("aurora: lastUniformSize", tracy::PlotFormatType::Memory, false, true, 0);

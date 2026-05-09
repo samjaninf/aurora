@@ -20,6 +20,12 @@
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_pixels.h>
 
+#if defined(SDL_PLATFORM_ANDROID)
+#include <jni.h>
+extern "C" void Android_LockActivityMutex(void);
+extern "C" void Android_UnlockActivityMutex(void);
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <vector>
@@ -38,6 +44,11 @@ bool g_frameBufferAspectFit = false;
 AuroraWindowSize g_windowSize;
 std::vector<AuroraEvent> g_events;
 std::atomic_bool g_backgrounded = false;
+#if defined(SDL_PLATFORM_ANDROID)
+std::atomic_bool g_surfaceReady = false;
+#else
+std::atomic_bool g_surfaceReady = true;
+#endif
 bool g_lastPaused = false;
 
 bool operator==(const AuroraWindowSize& lhs, const AuroraWindowSize& rhs) {
@@ -69,6 +80,9 @@ Vec2<int> fit_frame_buffer_to_aspect(int width, int height, float aspect) {
 }
 
 void resize_swapchain() noexcept {
+#if defined(SDL_PLATFORM_ANDROID)
+  SurfaceLock surfaceLock;
+#endif
   const auto size = get_window_size();
   if (size == g_windowSize) {
     return;
@@ -194,6 +208,7 @@ void process_event(SDL_Event& event) {
     } else if (event.type == g_sdlCustomEventsStart + CustomEvent::RefreshSurface) {
       // Refresh surface (vsync changed)
 #ifdef AURORA_ENABLE_GX
+      SurfaceLock surfaceLock;
       webgpu::refresh_surface(false);
 #endif
     }
@@ -431,7 +446,24 @@ bool is_paused() noexcept {
   return g_config.pauseOnFocusLost && ((flags & SDL_WINDOW_INPUT_FOCUS) == 0u || (flags & SDL_WINDOW_MINIMIZED) != 0u);
 }
 
-bool is_presentable() noexcept { return g_window != nullptr && !g_backgrounded.load(std::memory_order_relaxed); }
+bool is_presentable() noexcept {
+  return g_window != nullptr && !g_backgrounded.load(std::memory_order_acquire) &&
+         g_surfaceReady.load(std::memory_order_acquire);
+}
+
+void set_surface_ready(bool ready) noexcept { g_surfaceReady.store(ready, std::memory_order_release); }
+
+SurfaceLock::SurfaceLock() noexcept {
+#if defined(SDL_PLATFORM_ANDROID)
+  Android_LockActivityMutex();
+#endif
+}
+
+SurfaceLock::~SurfaceLock() {
+#if defined(SDL_PLATFORM_ANDROID)
+  Android_UnlockActivityMutex();
+#endif
+}
 
 bool push_custom_event(CustomEvent eventType) {
   SDL_Event event{.type = g_sdlCustomEventsStart + eventType};
@@ -497,3 +529,10 @@ void set_frame_buffer_aspect_fit(bool fit) {
 void set_background_input(bool value) { SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, value ? "1" : "0"); }
 
 } // namespace aurora::window
+
+#if defined(SDL_PLATFORM_ANDROID)
+extern "C" JNIEXPORT void JNICALL Java_org_libsdl_app_SDLSurface_auroraNativeSetSurfaceReady(JNIEnv*, jclass,
+                                                                                             jboolean ready) {
+  aurora::window::set_surface_ready(ready == JNI_TRUE);
+}
+#endif
