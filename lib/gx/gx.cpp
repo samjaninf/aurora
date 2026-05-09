@@ -915,9 +915,6 @@ void initialize() noexcept {
   }
 }
 
-// TODO this is awkward
-extern std::mutex g_gxCachedShadersMutex;
-extern absl::flat_hash_map<gfx::ShaderRef, std::pair<wgpu::ShaderModule, ShaderInfo>> g_gxCachedShaders;
 void shutdown() noexcept {
   // TODO we should probably store this all in g_state.gx instead
   sSamplerBindGroupLayout = {};
@@ -929,10 +926,6 @@ void shutdown() noexcept {
   }
   for (auto& item : g_gxState.textures) {
     item.ref.reset();
-  }
-  {
-    std::lock_guard lock{g_gxCachedShadersMutex};
-    g_gxCachedShaders.clear();
   }
   s_textureObjectCaches.clear();
   s_tlutObjectCaches.clear();

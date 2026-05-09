@@ -8,7 +8,7 @@
 
 #include <dolphin/gx/GXEnum.h>
 
-#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <mutex>
 #include <string_view>
 #include <utility>
@@ -22,11 +22,7 @@ using namespace std::string_view_literals;
 
 static Module Log("aurora::gfx::gx");
 
-std::mutex g_gxCachedShadersMutex;
-absl::flat_hash_map<gfx::ShaderRef, std::pair<wgpu::ShaderModule, ShaderInfo>> g_gxCachedShaders;
-#ifndef NDEBUG
-static absl::flat_hash_map<gfx::ShaderRef, ShaderConfig> g_gxCachedShaderConfigs;
-#endif
+absl::flat_hash_set<gfx::ShaderRef> g_seenShaders;
 
 static inline std::string_view chan_comp(GXTevColorChan chan) noexcept {
   switch (chan) {
@@ -682,17 +678,10 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
 wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
   ZoneScoped;
   const auto hash = xxh3_hash(config);
-  {
-    std::lock_guard lock{g_gxCachedShadersMutex};
-    const auto it = g_gxCachedShaders.find(hash);
-    if (it != g_gxCachedShaders.end()) {
-      // CHECK(g_gxCachedShaderConfigs[hash] == config, "Shader collision! {:x}", hash);
-      return it->second.first;
-    }
-  }
-
   const auto info = build_shader_info(config);
-  if (EnableDebugPrints) {
+  if (EnableDebugPrints && !g_seenShaders.contains(hash)) {
+    g_seenShaders.insert(hash);
+
     Log.info("Shader config (hash {:x}):", hash);
     {
       for (int i = 0; i < config.tevStageCount; ++i) {
@@ -1736,16 +1725,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
       .nextInChain = &wgslDescriptor,
       .label = label.c_str(),
   };
-  auto shader = webgpu::g_device.CreateShaderModule(&shaderDescriptor);
-
-  {
-    std::lock_guard lock{g_gxCachedShadersMutex};
-    g_gxCachedShaders.emplace(hash, std::make_pair(shader, info));
-#ifndef NDEBUG
-    g_gxCachedShaderConfigs.emplace(hash, config);
-#endif
-  }
-
-  return shader;
+  return webgpu::g_device.CreateShaderModule(&shaderDescriptor);
 }
 } // namespace aurora::gx
