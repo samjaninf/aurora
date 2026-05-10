@@ -477,7 +477,10 @@ void build_index() noexcept {
   s_replacementRoot = std::filesystem::path{g_config.configPath} / "texture_replacements";
   s_dumpRoot = std::filesystem::path{g_config.configPath} / "texture_dumps";
 
-  if (!ensure_directory(s_replacementRoot) || !ensure_directory(s_dumpRoot)) {
+  if (!ensure_directory(s_replacementRoot)) {
+    return;
+  }
+  if (g_config.allowTextureDumps && !ensure_directory(s_dumpRoot)) {
     return;
   }
 
