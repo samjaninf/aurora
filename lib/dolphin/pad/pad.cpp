@@ -680,11 +680,20 @@ uint32_t PADRead(PADStatus* status) {
 
     if (controller) {
       EnsureMappingLoaded(controller);
+      bool leftTriggerSet = false;
+      bool rightTriggerSet = false;
       std::for_each(
           controller->m_buttonMapping.begin(), controller->m_buttonMapping.end(),
-          [&controller, &i, &status](const auto& mapping) {
+          [&controller, &i, &status, &leftTriggerSet, &rightTriggerSet](const auto& mapping) {
             if (SDL_GetGamepadButton(controller->m_controller, static_cast<SDL_GamepadButton>(mapping.nativeButton))) {
               status[i].button |= mapping.padButton;
+            }
+            
+            if (mapping.padButton == PAD_TRIGGER_L && mapping.nativeButton != PAD_NATIVE_BUTTON_INVALID) {
+              leftTriggerSet = true;
+            }
+            if (mapping.padButton == PAD_TRIGGER_R && mapping.nativeButton != PAD_NATIVE_BUTTON_INVALID) {
+              rightTriggerSet = true;
             }
           });
 
@@ -772,10 +781,10 @@ uint32_t PADRead(PADStatus* status) {
       Sint16 tr = std::max((Sint16)0, _get_axis_value(controller, PAD_AXIS_TRIGGER_R));
 
       if (/*!controller->m_isGameCube && */ controller->m_deadZones.emulateTriggers) {
-        if (tl > controller->m_deadZones.leftTriggerActivationZone) {
+        if (!leftTriggerSet && tl > controller->m_deadZones.leftTriggerActivationZone) {
           status[i].button |= PAD_TRIGGER_L;
         }
-        if (tr > controller->m_deadZones.rightTriggerActivationZone) {
+        if (!rightTriggerSet && tr > controller->m_deadZones.rightTriggerActivationZone) {
           status[i].button |= PAD_TRIGGER_R;
         }
       }
