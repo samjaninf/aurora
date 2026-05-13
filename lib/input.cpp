@@ -45,11 +45,11 @@ std::array<PortPreference, PAD_MAX_CONTROLLERS> g_portPreferences;
 bool g_portPreferencesLoaded = false;
 
 std::string port_preferences_path() {
-  if (g_config.configPath == nullptr) {
+  if (g_config.userPath == nullptr) {
     return {};
   }
 
-  std::string path{g_config.configPath};
+  std::string path{g_config.userPath};
   if (!path.empty() && path.back() != '/' && path.back() != '\\') {
     path += '/';
   }
@@ -196,8 +196,8 @@ void save_port_preferences() {
     return;
   }
 
-  if (!SDL_CreateDirectory(g_config.configPath)) {
-    Log.warn("Failed to create controller port preference directory '{}': {}", g_config.configPath, SDL_GetError());
+  if (!SDL_CreateDirectory(g_config.userPath)) {
+    Log.warn("Failed to create controller port preference directory '{}': {}", g_config.userPath, SDL_GetError());
     return;
   }
 

@@ -32,8 +32,8 @@ void create_context() noexcept {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
-  g_imguiSettings = std::string{g_config.configPath} + "/imgui.ini";
-  g_imguiLog = std::string{g_config.configPath} + "/imgui.log";
+  g_imguiSettings = std::string{g_config.userPath} + "/imgui.ini";
+  g_imguiLog = std::string{g_config.cachePath} + "/imgui.log";
   io.IniFilename = g_imguiSettings.c_str();
   io.LogFilename = g_imguiLog.c_str();
 }

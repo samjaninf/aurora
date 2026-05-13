@@ -447,7 +447,7 @@ void __PADLoadMapping(aurora::input::GameController* controller) /*  NOLINT(*-re
     return;
   }
 
-  std::string basePath{aurora::g_config.configPath};
+  std::string basePath{aurora::g_config.userPath};
   if (!controller->m_mappingLoaded) {
     __PADSetDefaultMapping(controller);
     controller->m_axisMapping = g_defaultAxes;
@@ -1150,7 +1150,7 @@ constexpr uint32_t k_keyboardMagic = SBIG('KBND');
 constexpr int32_t k_keyboardVersion = 3;
 
 static void load_keyboard_bindings() {
-  const auto filePath = std::filesystem::path{aurora::g_config.configPath} / "keyboard_bindings.dat";
+  const auto filePath = std::filesystem::path{aurora::g_config.userPath} / "keyboard_bindings.dat";
   SDL_IOStream* file = SDL_IOFromFile(filePath.string().c_str(), "rb");
   if (file == nullptr) {
     return;
@@ -1220,7 +1220,7 @@ static void load_keyboard_bindings() {
 }
 
 static void save_keyboard_bindings() {
-  const auto filePath = std::filesystem::path{aurora::g_config.configPath} / "keyboard_bindings.dat";
+  const auto filePath = std::filesystem::path{aurora::g_config.userPath} / "keyboard_bindings.dat";
   SDL_IOStream* file = SDL_IOFromFile(filePath.string().c_str(), "wb");
   if (file == nullptr) {
     aurora::input::Log.warn("save_keyboard_bindings: failed to open {} for writing", filePath.string());
@@ -1247,7 +1247,7 @@ void __PADWriteDeadZones(SDL_IOStream* file, // NOLINT(*-reserved-identifier)
 }
 
 void PADSerializeMappings() {
-  const std::filesystem::path basePath{aurora::g_config.configPath};
+  const std::filesystem::path basePath{aurora::g_config.userPath};
 
   for (auto& controller : aurora::input::g_GameControllers | std::views::values) {
     EnsureMappingLoaded(&controller);
