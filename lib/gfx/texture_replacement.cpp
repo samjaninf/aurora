@@ -21,6 +21,7 @@
 #include <optional>
 #include <string_view>
 
+#include "png_io.hpp"
 #include "../fs_helper.hpp"
 
 using namespace aurora::gx;
@@ -34,7 +35,6 @@ struct RuntimeTextureKey {
   uint64_t tlutHash = 0;
   uint32_t width = 0;
   uint32_t height = 0;
-  bool hasMips = false;
   bool hasTlut = false;
   uint32_t format = 0;
 
@@ -42,8 +42,7 @@ struct RuntimeTextureKey {
 
   template <typename H>
   friend H AbslHashValue(H h, const RuntimeTextureKey& key) {
-    return H::combine(std::move(h), key.textureHash, key.tlutHash, key.width, key.height, key.hasMips, key.hasTlut,
-                      key.format);
+    return H::combine(std::move(h), key.textureHash, key.tlutHash, key.width, key.height, key.hasTlut, key.format);
   }
 };
 
@@ -61,7 +60,12 @@ struct CachedReplacement {
   std::list<RuntimeTextureKey>::iterator lruIt;
 };
 
-absl::flat_hash_map<RuntimeTextureKey, std::filesystem::path> s_replacementIndex;
+struct ReplacementIndexEntry {
+  std::filesystem::path path;
+  bool hasMips;
+};
+
+absl::flat_hash_map<RuntimeTextureKey, ReplacementIndexEntry> s_replacementIndex;
 absl::flat_hash_map<RuntimeTextureKey, CachedReplacement> s_replacementCache;
 absl::flat_hash_set<RuntimeTextureKey> s_failedKeys;
 absl::flat_hash_set<RuntimeTextureKey> s_reportedMisses;
@@ -258,7 +262,6 @@ RuntimeTextureKey build_runtime_key(const GXTexObj_& obj) noexcept {
   RuntimeTextureKey key{
       .width = obj.width(),
       .height = obj.height(),
-      .hasMips = obj.has_mips(),
       .hasTlut = is_palette_format(obj.format()),
       .format = obj.format(),
   };
@@ -275,16 +278,19 @@ RuntimeTextureKey build_runtime_key(const GXTexObj_& obj) noexcept {
 
 std::string format_replacement_filename(const RuntimeTextureKey& key) {
   if (key.hasTlut) {
-    return fmt::format("tex1_{}x{}{}_{:016x}_{:016x}_{}.dds", key.width, key.height, key.hasMips ? "_m" : "",
+    return fmt::format("tex1_{}x{}_{:016x}_{:016x}_{}.dds", key.width, key.height,
                        key.textureHash, key.tlutHash, key.format);
   }
-  return fmt::format("tex1_{}x{}{}_{:016x}_{}.dds", key.width, key.height, key.hasMips ? "_m" : "", key.textureHash,
-                     key.format);
+  return fmt::format("tex1_{}x{}_{:016x}_{}.dds", key.width, key.height, key.textureHash, key.format);
 }
 
 std::optional<RuntimeTextureKey> parse_replacement_filename(std::string_view filename) noexcept {
   const size_t dot = filename.rfind('.');
-  if (dot == std::string_view::npos || !iequals_ascii(filename.substr(dot), ".dds")) {
+  if (dot == std::string_view::npos) {
+    return std::nullopt;
+  }
+
+  if (!iequals_ascii(filename.substr(dot), ".dds") && !iequals_ascii(filename.substr(dot), ".png")) {
     return std::nullopt;
   }
 
@@ -323,7 +329,7 @@ std::optional<RuntimeTextureKey> parse_replacement_filename(std::string_view fil
     ++index;
   }
 
-  const size_t remaining = partCount - index;
+  size_t remaining = partCount - index;
   if (remaining != 2 && remaining != 3) {
     return std::nullopt;
   }
@@ -339,7 +345,12 @@ std::optional<RuntimeTextureKey> parse_replacement_filename(std::string_view fil
     textureHash = *parsedTex;
   }
 
-  const auto format = parse_u32(parts[partCount - 1]);
+  auto formatPart = parts[partCount - 1];
+  if (formatPart == "arb") {
+    formatPart = parts[partCount - 2];
+    remaining -= 1;
+  }
+  const auto format = parse_u32(formatPart);
   if (!format.has_value()) {
     return std::nullopt;
   }
@@ -364,32 +375,38 @@ std::optional<RuntimeTextureKey> parse_replacement_filename(std::string_view fil
       .tlutHash = tlutHash,
       .width = dimensions->first,
       .height = dimensions->second,
-      .hasMips = hasMips,
       .hasTlut = hasTlut,
       .format = *format,
   };
 }
 
-std::optional<ConvertedTexture> load_replacement(const std::filesystem::path& path, bool hasMips) noexcept {
-  auto base = dds::load_dds_file(path);
+static std::optional<ConvertedTexture> load_texture_file(const std::filesystem::path& path) {
+  if (path.extension() == ".png") {
+    return png::load_png_file(path);
+  } else {
+    return dds::load_dds_file(path);
+  }
+}
+
+std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& entry) noexcept {
+  auto base = load_texture_file(entry.path);
   if (!base.has_value()) {
-    Log.warn("texture_replacement: failed to load texture {}", fs_path_to_string(path));
+    Log.warn("texture_replacement: failed to load texture {}", fs_path_to_string(entry.path));
     return std::nullopt;
   }
-  if (!hasMips) {
+  if (!entry.hasMips) {
     return base;
   }
 
   std::vector<ConvertedTexture> more;
   std::error_code ec;
   for (uint32_t mipLevel = 1;; ++mipLevel) {
-    const auto mipPath = path.parent_path() / fmt::format("{}_mip{}{}", fs_path_to_string(path.stem()), mipLevel,
-                                                          fs_path_to_string(path.extension()));
+    const auto mipPath = entry.path.parent_path() / fmt::format("{}_mip{}{}", fs_path_to_string(entry.path.stem()), mipLevel, fs_path_to_string(entry.path.extension()));
     if (!std::filesystem::is_regular_file(mipPath, ec)) {
       break;
     }
 
-    auto lvl = dds::load_dds_file(mipPath);
+    auto lvl = load_texture_file(mipPath);
     const uint32_t ew = std::max(base->width >> mipLevel, 1u);
     const uint32_t eh = std::max(base->height >> mipLevel, 1u);
     const bool ok = lvl.has_value() && lvl->format == base->format && lvl->width == ew && lvl->height == eh;
@@ -509,7 +526,7 @@ void build_index() noexcept {
       continue;
     }
 
-    if (!iequals_ascii(fs_path_to_string(path.extension()), ".dds")) {
+    if (!iequals_ascii(fs_path_to_string(path.extension()), ".dds") && !iequals_ascii(fs_path_to_string(path.extension()), ".png")) {
       continue;
     }
 
@@ -528,7 +545,7 @@ void build_index() noexcept {
   Log.info("Indexed {} texture replacements", s_replacementIndex.size());
 }
 
-const std::filesystem::path* find_replacement_path(const RuntimeTextureKey& key) noexcept {
+const ReplacementIndexEntry* find_replacement_path(const RuntimeTextureKey& key) noexcept {
   if (const auto it = s_replacementIndex.find(key); it != s_replacementIndex.end()) {
     return &it->second;
   }
@@ -560,8 +577,8 @@ const gfx::TextureHandle* find_cached_replacement(const RuntimeTextureKey& key) 
   return &cached->second.handle;
 }
 
-gfx::TextureHandle load_replacement_texture(const RuntimeTextureKey& key, const std::filesystem::path& path) noexcept {
-  const auto replacement = load_replacement(path, key.hasMips);
+gfx::TextureHandle load_replacement_texture(const RuntimeTextureKey& key, const ReplacementIndexEntry& entry) noexcept {
+  const auto replacement = load_replacement(entry);
   if (!replacement.has_value()) {
     s_failedKeys.insert(key);
     return {};
@@ -753,4 +770,10 @@ std::optional<TextureHandle> find_replacement(const GXTexObj_& obj) noexcept {
   cache_replacement(key, handle);
   return handle;
 }
+
+std::string build_texture_replacement_name(const GXTexObj_& obj) noexcept {
+  const RuntimeTextureKey key = build_runtime_key(obj);
+  return format_replacement_filename(key);
+}
+
 } // namespace aurora::gfx::texture_replacement
